@@ -1,0 +1,13 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+.conda/
+.env
+# notebooks
+.ipynb_checkpoints/
+# data
+data/
+# OS/editor
+.DS_Store
+.vscode/
