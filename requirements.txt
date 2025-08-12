@@ -1,0 +1,9 @@
+praw
+python-binance
+pandas
+numpy
+pyarrow
+tqdm
+vaderSentiment
+pyyaml
+python-dotenv

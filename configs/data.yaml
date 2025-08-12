@@ -1,0 +1,23 @@
+subreddits:
+  - CryptoCurrency
+  - Bitcoin
+  - Ethereum
+  - CryptoMarkets
+
+symbols:  # Binance spot symbols for v1
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+  - BNBUSDT
+  - XRPUSDT
+  - ADAUSDT
+  - AVAXUSDT
+  - DOGEUSDT
+  - LINKUSDT
+  - MATICUSDT
+  - DOTUSDT
+  - ATOMUSDT
+
+intervals:
+  - 1h
+  - 4h
