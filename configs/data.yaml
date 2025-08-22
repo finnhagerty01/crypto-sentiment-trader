@@ -1,10 +1,14 @@
+# Subreddits to monitor
 subreddits:
   - CryptoCurrency
   - Bitcoin
   - Ethereum
   - CryptoMarkets
+  - altcoin
+  - defi
 
-symbols:  # Binance spot symbols for v1
+# Cryptocurrency symbols (Binance format)
+symbols:
   - BTCUSDT
   - ETHUSDT
   - SOLUSDT
@@ -18,6 +22,25 @@ symbols:  # Binance spot symbols for v1
   - DOTUSDT
   - ATOMUSDT
 
+# Time intervals for analysis
 intervals:
   - 1h
   - 4h
+
+# Trading parameters
+trading_params:
+  enter_threshold: 0.52
+  exit_threshold: 0.48
+  min_hold_bars: 2
+  fee_per_side: 0.0010  # 0.10% per trade side
+  slippage_per_side: 0.0005  # 0.05% slippage
+
+# Data collection settings
+reddit_limit_per_sub: 200
+reddit_min_score: 2
+market_data_limit: 1000
+reddit_min_length: 15
+
+# Feature engineering
+sentiment_half_life: "6H"
+sentiment_lookback_bars: 24

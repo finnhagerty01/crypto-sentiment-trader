@@ -11,3 +11,5 @@ data/
 # OS/editor
 .DS_Store
 .vscode/
+models/
+logs/

@@ -7,3 +7,10 @@ tqdm
 vaderSentiment
 pyyaml
 python-dotenv
+scikit-learn
+langdetect
+xgboost
+lightgbm
+streamlit
+plotly
+seaborn
