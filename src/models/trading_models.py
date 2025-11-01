@@ -202,28 +202,27 @@ class TradingModelPipeline:
         
         return ensemble
     
-    def train(self,
-             X: pd.DataFrame,
-             y: pd.Series,
-             feature_cols: Optional[List[str]] = None,
-             cv_splits: int = 5) -> Dict[str, float]:
+    def train(self, X: pd.DataFrame, y: pd.Series, 
+         feature_cols: Optional[List[str]] = None,
+         timestamps: Optional[pd.Series] = None,
+         cv_splits: int = 5) -> Dict[str, float]:
         """
-        Train model with time series cross-validation.
+        Train model with time series cross-validation including purging/embargo.
         
         Args:
             X: Feature DataFrame
             y: Target labels
             feature_cols: List of feature columns to use
+            timestamps: Timestamp series for purging/embargo (required)
             cv_splits: Number of CV splits
-        
-        Returns:
-            Dictionary of average metrics across CV folds
         """
+        if timestamps is None:
+            raise ValueError("timestamps required for proper time-series validation with purging/embargo")
+        
         if feature_cols:
             X = X[feature_cols]
             self.feature_names = feature_cols
         else:
-            # Select numeric features only
             X = X.select_dtypes(include=[np.number])
             self.feature_names = X.columns.tolist()
         
@@ -232,11 +231,11 @@ class TradingModelPipeline:
         # Build model
         self.model = self.build_model()
         
-        # Time series cross-validation
-        tscv = TimeSeriesSplit(n_splits=cv_splits)
+        # Time series cross-validation with purging and embargo
+        splits = self._purge_embargo_splits(X, y, timestamps, cv_splits, embargo_pct=0.01)
         cv_metrics = []
         
-        for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+        for fold, (train_idx, val_idx) in enumerate(splits):
             X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
             y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
             
@@ -252,8 +251,7 @@ class TradingModelPipeline:
             metrics['fold'] = fold
             cv_metrics.append(metrics)
             
-            logger.info(f"Fold {fold}: AUC={metrics['auc']:.3f}, "
-                       f"Accuracy={metrics['accuracy']:.3f}")
+            logger.info(f"Fold {fold}: AUC={metrics['auc']:.3f}, Accuracy={metrics['accuracy']:.3f}")
         
         # Store metrics history
         self.metrics_history = cv_metrics
@@ -411,6 +409,54 @@ class TradingModelPipeline:
         
         logger.info(f"Model loaded from {path}")
 
+    def _purge_embargo_splits(self, X: pd.DataFrame, y: pd.Series, 
+                         timestamps: pd.Series, n_splits: int = 5,
+                         embargo_pct: float = 0.01) -> List[Tuple]:
+        """
+        Create time series splits with purging and embargo.
+        
+        Purging: Remove samples from training that have overlapping 
+        forward returns with validation set.
+        
+        Embargo: Add gap after training set to prevent information leakage.
+        
+        Args:
+            X: Features
+            y: Labels  
+            timestamps: Timestamp series (same index as X)
+            n_splits: Number of CV splits
+            embargo_pct: Percentage of samples to embargo (e.g., 0.01 = 1%)
+        
+        Returns:
+            List of (train_idx, val_idx) tuples
+        """
+        from sklearn.model_selection import TimeSeriesSplit
+        
+        tscv = TimeSeriesSplit(n_splits=n_splits)
+        splits = []
+        
+        for train_idx, val_idx in tscv.split(X):
+            # Get timestamps
+            train_times = timestamps.iloc[train_idx]
+            val_times = timestamps.iloc[val_idx]
+            
+            # Embargo: remove last embargo_pct of training samples
+            embargo_size = int(len(train_idx) * embargo_pct)
+            if embargo_size > 0:
+                train_idx = train_idx[:-embargo_size]
+            
+            # Purging: remove training samples that overlap with validation
+            # For forward_return_6, we need to purge last 6 samples before val
+            val_start = val_times.min()
+            purge_threshold = val_start - pd.Timedelta(hours=6)  # Adjust based on max horizon
+            
+            # Keep only training samples before purge threshold
+            train_mask = train_times < purge_threshold
+            train_idx = train_idx[train_mask.values]
+            
+            splits.append((train_idx, val_idx))
+        
+        return splits
 
 class TradingBacktester:
     """

@@ -145,8 +145,9 @@ class LiveTradingEngine:
             True if safe to trade
         """
         # Check confidence threshold
-        if signal.get('confidence', 0) < 0.7:
-            logger.info(f"Skipping {symbol}: Low confidence {signal['confidence']:.2%}")
+        confidence = signal.get('confidence', 0)
+        if confidence < 0.7:
+            logger.info(f"Skipping {symbol}: Low confidence {confidence:.2%}")
             return False
         
         # Check maximum exposure
@@ -235,28 +236,40 @@ class LiveTradingEngine:
             'signal_confidence': signal.get('confidence', 0)
         }
     
-    def _calculate_position_size(self, 
-                                symbol: str,
-                                probability: float,
-                                confidence: float) -> float:
+    def _calculate_position_size(self, symbol: str, probability: float, 
+                            confidence: float,
+                            recent_returns: Optional[pd.Series] = None) -> float:
         """
-        Calculate position size using Kelly Criterion with safety limits.
+        Calculate position size using Kelly Criterion with actual edge estimation.
         
         Args:
             symbol: Trading symbol
-            probability: Win probability
+            probability: Win probability (MUST be calibrated!)
             confidence: Signal confidence
-        
-        Returns:
-            Position value in USDT
+            recent_returns: Recent returns for estimating win/loss ratio
         """
+        # Estimate win/loss ratio from recent performance, not hardcoded
+        if recent_returns is not None and len(recent_returns) > 20:
+            winning_returns = recent_returns[recent_returns > 0]
+            losing_returns = recent_returns[recent_returns < 0]
+            
+            if len(winning_returns) > 0 and len(losing_returns) > 0:
+                avg_win = winning_returns.mean()
+                avg_loss = abs(losing_returns.mean())
+                b = avg_win / avg_loss if avg_loss > 0 else 1.5
+            else:
+                b = 1.5  # Fallback
+        else:
+            b = 1.5  # Fallback for insufficient data
+        
         # Kelly fraction: f = (p*b - q) / b
-        # where p = win probability, q = loss probability, b = win/loss ratio
         p = probability
         q = 1 - p
-        b = 1.5  # Assume 1.5:1 reward/risk ratio
         
         kelly_fraction = (p * b - q) / b
+        
+        # Fractional Kelly (use 25% of Kelly for safety)
+        kelly_fraction *= 0.25
         
         # Apply confidence scaling
         kelly_fraction *= confidence
@@ -265,7 +278,7 @@ class LiveTradingEngine:
         kelly_fraction = min(kelly_fraction, self.max_position_size)
         
         # Ensure positive and reasonable
-        kelly_fraction = max(0, min(kelly_fraction, 0.25))  # Max 25% per trade
+        kelly_fraction = max(0, min(kelly_fraction, 0.10))  # Max 10% per trade with fractional Kelly
         
         # Calculate position value
         available_balance = self.balance.get('USDT', 0)

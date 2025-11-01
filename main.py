@@ -71,27 +71,43 @@ class CryptoTradingSystem:
         Path('logs').mkdir(exist_ok=True)
         
     def collect_data(self, 
-                    lookback_hours: int = 24,
-                    lookback_days: int = 30) -> Dict:
+                lookback_days: int = 30,
+                use_pushshift: bool = True) -> Dict:
         """
-        Collect fresh data from Reddit and market sources.
+        Collect fresh data with ALIGNED lookback periods.
         
         Args:
-            lookback_hours: Hours of Reddit data to fetch
-            lookback_days: Days of market data to fetch
+            lookback_days: Days of history to fetch (applies to both market and Reddit)
+            use_pushshift: Whether to use Pushshift for historical Reddit data
         
         Returns:
             Dictionary with data statistics
         """
-        logger.info("Starting data collection")
+        logger.info(f"Starting data collection with {lookback_days} days lookback")
         stats = {}
         
         # Collect Reddit data
         try:
-            reddit_df = self.reddit_collector.fetch_posts(lookback_hours=lookback_hours)
+            if use_pushshift and lookback_days > 3:
+                # Use hybrid: Pushshift for historical + Reddit API for recent
+                reddit_df = self.reddit_collector.fetch_hybrid_data(
+                    lookback_hours=24,  # Last day via API
+                    historical_days=lookback_days  # Full history via Pushshift
+                )
+            else:
+                # Use Reddit API only (limited to ~3 days realistically)
+                lookback_hours = lookback_days * 24
+                reddit_df = self.reddit_collector.fetch_posts(
+                    lookback_hours=lookback_hours
+                )
+            
             if not reddit_df.empty:
                 self.reddit_collector.save_data(reddit_df)
                 stats['reddit_posts'] = len(reddit_df)
+                stats['reddit_date_range'] = {
+                    'start': reddit_df['created_utc'].min(),
+                    'end': reddit_df['created_utc'].max()
+                }
                 logger.info(f"Collected {len(reddit_df)} Reddit posts")
             else:
                 logger.warning("No Reddit posts collected")
@@ -100,7 +116,7 @@ class CryptoTradingSystem:
             logger.error(f"Error collecting Reddit data: {e}")
             stats['reddit_posts'] = 0
         
-        # Collect market data
+        # Collect market data (same lookback period)
         try:
             market_data = self.market_collector.fetch_multiple_symbols(
                 lookback_days=lookback_days
@@ -320,9 +336,12 @@ class CryptoTradingSystem:
         
         # Sort by confidence
         signals = signals.sort_values('confidence', ascending=False)
+        for idx, row in signals.iterrows():
+            symbol = row.get('symbol') or idx
         
         logger.info("\nCurrent Trading Signals:")
         logger.info("-" * 60)
+
         for symbol, row in signals.iterrows():
             logger.info(f"{symbol}: {row['action']} "
                        f"(Confidence: {row['confidence']:.1%}, "
@@ -330,11 +349,39 @@ class CryptoTradingSystem:
         
         return signals
     
+    def run_engagement_validation(self, market_df: pd.DataFrame) -> Dict:
+        """
+        Run engagement validation analysis.
+        
+        This analyzes how post engagement correlates with price movement
+        WITHOUT using engagement for prediction (avoiding temporal leakage).
+        
+        Args:
+            market_df: Market data
+        
+        Returns:
+            Validation results
+        """
+        from src.analysis.engagement_validation import EngagementValidator
+        
+        logger.info("Running engagement validation analysis")
+        
+        validator = EngagementValidator(self.config)
+        results = validator.run_comprehensive_validation(market_df)
+        
+        # Generate plots for each symbol
+        for symbol in self.config.symbols:
+            plot_path = self.config.processed_dir / f'engagement_analysis_{symbol}.png'
+            validator.plot_engagement_analysis(symbol, market_df, plot_path)
+        
+        return results
+    
     def run_pipeline(self,
                     interval: str = '1h',
                     model_type: str = 'ensemble',
                     collect_fresh: bool = True,
-                    lookback_days: int = 30):
+                    lookback_days: int = 30,
+                    validate_engagement: bool = True):
         """
         Run the complete trading pipeline.
         
@@ -351,7 +398,7 @@ class CryptoTradingSystem:
         # Step 1: Data Collection
         if collect_fresh:
             stats = self.collect_data(
-                lookback_hours=24,
+                lookback_hours=72,
                 lookback_days=lookback_days
             )
             logger.info(f"Data collection complete: {stats}")
@@ -377,10 +424,19 @@ class CryptoTradingSystem:
         
         # Step 6: Generate Current Signals
         signals = self.generate_signals(interval)
-        
+
         logger.info("=" * 60)
         logger.info("Pipeline Complete!")
         logger.info("=" * 60)
+
+        if validate_engagement:
+            logger.info("Running engagement validation analysis")
+            validation_results = self.run_engagement_validation(dataset)
+            
+            # Log key findings
+            optimal = validation_results['overall_findings'].get('optimal_lag', {})
+            logger.info(f"Optimal engagement lag: {optimal.get('lag', 'N/A')}")
+            logger.info(f"Combined correlation: {optimal.get('correlation', 0):.3f}")
         
         return {
             'dataset': dataset,

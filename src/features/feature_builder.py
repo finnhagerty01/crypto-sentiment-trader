@@ -103,14 +103,7 @@ class SentimentFeatureBuilder:
         logger.info(f"Mapped {len(df)} posts to {len(result)} symbol-post pairs")
         return result
     
-    def _aggregate_sentiment_features(self,
-                                     df: pd.DataFrame,
-                                     interval: str) -> pd.DataFrame:
-        """
-        Aggregate sentiment features by symbol and time window.
-        
-        Uses exponential time decay and engagement weighting.
-        """
+    def _aggregate_sentiment_features(self, df: pd.DataFrame, interval: str) -> pd.DataFrame:
         # Convert interval to pandas frequency
         freq = self._interval_to_freq(interval)
         
@@ -129,7 +122,8 @@ class SentimentFeatureBuilder:
                 if group.empty:
                     continue
                 
-                features = self._compute_weighted_features(group, timestamp)
+                # Pass freq to compute proper bar end
+                features = self._compute_weighted_features(group, timestamp, freq)
                 features['symbol'] = symbol
                 features['timestamp'] = timestamp
                 features['interval'] = interval
@@ -139,21 +133,25 @@ class SentimentFeatureBuilder:
         result = pd.DataFrame(aggregated)
         return result.sort_values(['symbol', 'timestamp'])
     
-    def _compute_weighted_features(self,
-                                  group: pd.DataFrame,
-                                  bar_end: pd.Timestamp) -> Dict:
+    def _compute_weighted_features(self, 
+                              group: pd.DataFrame,
+                              bar_start: pd.Timestamp,
+                              freq: str) -> Dict:
         """
         Compute weighted sentiment features for a time window.
         
-        Weights based on:
-        1. Time decay (more recent = higher weight)
-        2. Engagement (higher score/comments = higher weight)
-        3. Mention strength
+        Args:
+            group: Posts in this time window
+            bar_start: Start of the bar (resampled timestamp)
+            freq: Frequency string like '1H'
         """
         if group.empty:
             return {}
         
-        # Calculate time weights (exponential decay)
+        # Calculate the actual bar end time
+        bar_end = bar_start + pd.Timedelta(freq)
+        
+        # Calculate time weights (exponential decay from bar END)
         half_life = pd.Timedelta(self.config.sentiment_half_life)
         age = (bar_end - group.index).total_seconds()
         time_weights = np.exp(-np.log(2) * age / half_life.total_seconds())
@@ -164,7 +162,7 @@ class SentimentFeatureBuilder:
         engagement_weights = 1.0 + np.log1p(scores) / 10
         
         # Combine weights
-        weights = time_weights * engagement_weights * group.get('mention_strength', 1.0)
+        weights = time_weights * group.get('mention_strength', 1.0)
         weights = weights / weights.sum() if weights.sum() > 0 else np.ones(len(group)) / len(group)
         
         # Compute weighted features
@@ -173,24 +171,18 @@ class SentimentFeatureBuilder:
             'post_count': len(group),
             'unique_authors': group['author'].nunique(),
             
-            # Engagement features
-            'avg_score': float(scores.mean()),
-            'max_score': float(scores.max()),
-            'total_comments': int(group['num_comments'].sum()),
-            'avg_engagement_rate': float(group.get('engagement_rate', 0).mean()),
-            
-            # Weighted sentiment features
+            # Weighted sentiment features - SAFE (using time weights only)
             'sentiment_mean': float(np.sum(weights * group['vader_compound'])),
             'sentiment_std': float(group['vader_compound'].std()),
             'positive_ratio': float(np.sum(weights * group['sentiment_positive'])),
             'negative_ratio': float(np.sum(weights * group['sentiment_negative'])),
             
-            # VADER components (weighted)
+            # VADER components (weighted) - SAFE
             'vader_pos': float(np.sum(weights * group['vader_pos'])),
             'vader_neg': float(np.sum(weights * group['vader_neg'])),
             'vader_neu': float(np.sum(weights * group['vader_neu'])),
             
-            # Controversy indicator
+            # Controversy indicator - SAFE
             'controversy_score': float(group.get('controversy', 0).mean()),
         }
         
@@ -304,10 +296,15 @@ class MarketFeatureBuilder:
         df['volatility_6'] = df['return_1'].rolling(6).std()
         df['volatility_24'] = df['return_1'].rolling(24).std()
         df['volatility_ratio'] = df['volatility_6'] / (df['volatility_24'] + 1e-9)
+        df['range_expansion'] = (df['high'] - df['low']) / df['close']
+        df['true_range'] = df[['high', 'close.shift(1)']].max(axis=1) - df[['low', 'close.shift(1)']].min(axis=1)
         
         # Price momentum indicators
-        df['momentum_12'] = df['close'] / df['close'].shift(12) - 1
-        df['momentum_24'] = df['close'] / df['close'].shift(24) - 1
+        df['momentum_score'] = (
+            (df['close'] > df['close'].shift(1)).astype(int) +
+            (df['close'] > df['close'].shift(3)).astype(int) +
+            (df['close'] > df['close'].shift(6)).astype(int)
+        ) / 3
         
         # RSI (Relative Strength Index)
         df['rsi_14'] = self._calculate_rsi(df['close'], 14)
@@ -322,7 +319,21 @@ class MarketFeatureBuilder:
         # Volume features
         df['volume_ratio'] = df['volume'] / df['volume'].rolling(24).mean()
         df['volume_momentum'] = df['volume'].pct_change(6)
-        
+        df['volume_trend'] = df['volume'].rolling(6).mean() / df['volume'].rolling(24).mean()
+        df['volume_spike'] = df['volume'] / df['volume'].rolling(24).quantile(0.75)
+        df['buy_pressure'] = df['taker_buy_base'] / df['volume']  # If available
+
+        # SUPPORT/RESISTANCE
+        df['distance_from_high_24h'] = (df['close'] - df['high'].rolling(24).max()) / df['close']
+        df['distance_from_low_24h'] = (df['close'] - df['low'].rolling(24).min()) / df['close']
+        df['breaks_high'] = (df['close'] > df['high'].rolling(24).max()).astype(int)
+       
+        # CROSS-MARKET FEATURES
+        # Compare to BTC (market leader)
+        btc_returns = df[df['symbol'] == 'BTCUSDT']['return_1']
+        df['correlation_with_btc_rolling'] = df['return_1'].rolling(24).corr(btc_returns)
+        df['beta_to_btc'] = df['return_1'].rolling(24).cov(btc_returns) / btc_returns.rolling(24).var()
+
         # Price efficiency (how close to high/low)
         df['price_position'] = (df['close'] - df['low']) / (df['high'] - df['low'] + 1e-9)
         df['price_efficiency'] = 2 * df['price_position'] - 1  # Scale to [-1, 1]
@@ -353,12 +364,12 @@ class MarketFeatureBuilder:
         if df.empty or 'BTCUSDT' not in df['symbol'].values:
             return df
         
-        # Get BTC data as market benchmark
-        btc_data = df[df['symbol'] == 'BTCUSDT'][['timestamp', 'return_1', 'volatility_6']].copy()
-        btc_data.columns = ['timestamp', 'btc_return', 'btc_volatility']
-        
-        # Merge BTC features to all assets
-        df = df.merge(btc_data, on='timestamp', how='left')
+        # Get BTC data as market benchmark - MUST include interval
+        btc_data = df[df['symbol'] == 'BTCUSDT'][['timestamp', 'interval', 'return_1', 'volatility_6']].copy()
+        btc_data.columns = ['timestamp', 'interval', 'btc_return', 'btc_volatility']
+
+        # Merge BTC features to all assets - MERGE ON BOTH timestamp AND interval
+        df = df.merge(btc_data, on=['timestamp', 'interval'], how='left')
         
         # Calculate beta to BTC
         for symbol in df['symbol'].unique():
@@ -491,23 +502,36 @@ class FeaturePipeline:
         
         # Merge on timestamp, symbol, and interval
         merged = pd.merge(
-            market_df,
-            sentiment_df,
-            on=['timestamp', 'symbol', 'interval'],
-            how='left'  # Keep all market data, sentiment may be sparse
+        market_df,
+        sentiment_df,
+        on=['timestamp', 'symbol', 'interval'],
+        how='left'
         )
-        
-        # Forward fill sentiment features (sentiment persists)
+    
+        # Forward fill sentiment features
         sentiment_cols = [col for col in sentiment_df.columns 
-                         if col not in ['timestamp', 'symbol', 'interval']]
+                        if col not in ['timestamp', 'symbol', 'interval']]
         
         for col in sentiment_cols:
             merged[col] = merged.groupby('symbol')[col].fillna(method='ffill', limit=6)
         
+        # SAFETY: Shift sentiment features by 1 bar to ensure no lookahead
+        # Sentiment at time t predicts return from t to t+1
+        for col in sentiment_cols:
+            merged[f'{col}_lag1'] = merged.groupby('symbol')[col].shift(1)
+        
+        # Use lagged features for modeling
+        # Original features can be kept for analysis, but don't use in model
+        
         return merged
     
     def _create_labels(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Create prediction labels for supervised learning."""
+        """Create prediction labels for supervised learning.
+        
+        NOTE: Multi-class labels use quantiles on entire dataset.
+        For proper time-series validation, recompute quantiles 
+        within each training fold to avoid look-ahead bias.
+        """
         if df.empty:
             return df
         
@@ -522,15 +546,17 @@ class FeaturePipeline:
                     df.loc[mask, 'return_1'].shift(-horizon)
                 )
             
-            # Binary labels (up/down)
-            df.loc[mask, 'label_direction'] = (
-                df.loc[mask, 'forward_return_1'] > 0
-            ).astype(int)
-            
-            # Multi-class labels (strong down, down, neutral, up, strong up)
+            # Binary labels with NEUTRAL ZONE (more robust)
+            epsilon = 0.0005  # 0.05% neutral zone
             returns = df.loc[mask, 'forward_return_1']
-            percentiles = returns.quantile([0.2, 0.4, 0.6, 0.8])
+            df.loc[mask, 'label_direction'] = np.select(
+                [returns > epsilon, returns < -epsilon],
+                [1, 0],
+                default=np.nan  # Mark neutral zone as NaN to exclude
+            )
             
+            # Multi-class labels (recompute in training pipeline for each fold)
+            percentiles = returns.quantile([0.2, 0.4, 0.6, 0.8])
             conditions = [
                 returns <= percentiles[0.2],
                 (returns > percentiles[0.2]) & (returns <= percentiles[0.4]),
@@ -538,8 +564,7 @@ class FeaturePipeline:
                 (returns > percentiles[0.6]) & (returns <= percentiles[0.8]),
                 returns > percentiles[0.8]
             ]
-            choices = [0, 1, 2, 3, 4]  # 0=strong down, 4=strong up
-            
+            choices = [0, 1, 2, 3, 4]
             df.loc[mask, 'label_multiclass'] = np.select(conditions, choices, default=2)
         
         return df
