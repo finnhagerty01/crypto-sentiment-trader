@@ -125,6 +125,9 @@ class CryptoTradingSystem:
                 self.market_collector.save_data(market_data)
                 total_candles = sum(len(df) for df in market_data.values())
                 stats['market_candles'] = total_candles
+                market_start = min(df['timestamp'].min() for df in market_data.values())
+                market_end = max(df['timestamp'].max() for df in market_data.values())
+                stats['market_date_range'] = {'start': market_start, 'end': market_end}
                 logger.info(f"Collected {total_candles} market candles")
             else:
                 logger.warning("No market data collected")
@@ -133,6 +136,17 @@ class CryptoTradingSystem:
             logger.error(f"Error collecting market data: {e}")
             stats['market_candles'] = 0
         
+        # Provide quick alignment check between Reddit and market timelines
+        reddit_range = stats.get('reddit_date_range')
+        market_range = stats.get('market_date_range')
+        if reddit_range and market_range:
+            overlap_start = max(reddit_range['start'], market_range['start'])
+            overlap_end = min(reddit_range['end'], market_range['end'])
+            stats['timeline_overlap_hours'] = max(
+                0,
+                (overlap_end - overlap_start).total_seconds() / 3600
+            )
+
         return stats
     
     def build_features(self, 
@@ -196,7 +210,12 @@ class CryptoTradingSystem:
         y = dataset['label_direction']
         
         # Train model
-        metrics = self.model_pipeline.train(X, y, feature_cols)
+        metrics = self.model_pipeline.train(
+            X,
+            y,
+            feature_cols=feature_cols,
+            timestamps=dataset['timestamp'],
+        )
         
         # Save model
         self.model_pipeline.save_model()
@@ -397,10 +416,7 @@ class CryptoTradingSystem:
         
         # Step 1: Data Collection
         if collect_fresh:
-            stats = self.collect_data(
-                lookback_hours=72,
-                lookback_days=lookback_days
-            )
+            stats = self.collect_data(lookback_days=lookback_days)
             logger.info(f"Data collection complete: {stats}")
         
         # Step 2: Feature Engineering

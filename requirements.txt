@@ -3,6 +3,7 @@ python-binance
 pandas
 numpy
 pyarrow
+requests
 tqdm
 vaderSentiment
 pyyaml
