@@ -202,71 +202,113 @@ class TradingModelPipeline:
         
         return ensemble
     
-    def train(self, X: pd.DataFrame, y: pd.Series, 
-         feature_cols: Optional[List[str]] = None,
-         timestamps: Optional[pd.Series] = None,
-         cv_splits: int = 5) -> Dict[str, float]:
-        """
-        Train model with time series cross-validation including purging/embargo.
-        
-        Args:
-            X: Feature DataFrame
-            y: Target labels
-            feature_cols: List of feature columns to use
-            timestamps: Timestamp series for purging/embargo (required)
-            cv_splits: Number of CV splits
-        """
+    def train(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        feature_cols: Optional[List[str]] = None,
+        timestamps: Optional[pd.Series] = None,
+        cv_splits: int = 5,
+        validation_size: float = 0.1,
+        test_size: float = 0.1,
+    ) -> Dict[str, float]:
+        """Train model with time-series aware splits, returning rich metrics."""
+
         if timestamps is None:
-            raise ValueError("timestamps required for proper time-series validation with purging/embargo")
-        
+            raise ValueError("timestamps required for proper time-series validation")
+
         if feature_cols:
             X = X[feature_cols]
             self.feature_names = feature_cols
         else:
             X = X.select_dtypes(include=[np.number])
             self.feature_names = X.columns.tolist()
-        
+
         logger.info(f"Training {self.model_type} model with {len(self.feature_names)} features")
-        
+
+        # Order by timestamp to avoid leakage
+        order = np.argsort(pd.to_datetime(timestamps).to_numpy())
+        X = X.iloc[order].reset_index(drop=True)
+        y = y.iloc[order].reset_index(drop=True)
+        timestamps = pd.to_datetime(timestamps).iloc[order].reset_index(drop=True)
+
+        n_samples = len(X)
+        if n_samples < 10:
+            raise ValueError("Not enough samples for training")
+
+        test_size = min(max(test_size, 0.05), 0.3)
+        validation_size = min(max(validation_size, 0.05), 0.3)
+
+        test_start = int(n_samples * (1 - test_size))
+        val_start = int(n_samples * (1 - test_size - validation_size))
+
+        if val_start < 1:
+            val_start = max(1, n_samples - int(n_samples * (test_size + validation_size)))
+
+        train_X, train_y = X.iloc[:val_start], y.iloc[:val_start]
+        val_X, val_y = X.iloc[val_start:test_start], y.iloc[val_start:test_start]
+        test_X, test_y = X.iloc[test_start:], y.iloc[test_start:]
+
+        train_timestamps = timestamps.iloc[:val_start]
+
         # Build model
         self.model = self.build_model()
-        
-        # Time series cross-validation with purging and embargo
-        splits = self._purge_embargo_splits(X, y, timestamps, cv_splits, embargo_pct=0.01)
-        cv_metrics = []
-        
-        for fold, (train_idx, val_idx) in enumerate(splits):
-            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-            y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
-            
-            # Train on fold
-            self.model.fit(X_train, y_train)
-            
-            # Predict
-            y_pred = self.model.predict(X_val)
-            y_proba = self.model.predict_proba(X_val)[:, 1]
-            
-            # Calculate metrics
-            metrics = self._calculate_metrics(y_val, y_pred, y_proba)
-            metrics['fold'] = fold
-            cv_metrics.append(metrics)
-            
-            logger.info(f"Fold {fold}: AUC={metrics['auc']:.3f}, Accuracy={metrics['accuracy']:.3f}")
-        
-        # Store metrics history
+
+        # Cross-validation on training portion
+        n_cv_splits = min(cv_splits, max(2, len(train_X) // 200))
+        if n_cv_splits < 2:
+            n_cv_splits = 2 if len(train_X) > 10 else 1
+
+        cv_metrics: List[Dict[str, float]] = []
+        if n_cv_splits > 1:
+            splits = self._purge_embargo_splits(
+                train_X, train_y, train_timestamps, n_cv_splits, embargo_pct=0.01
+            )
+
+            for fold, (cv_train_idx, cv_val_idx) in enumerate(splits):
+                X_train, X_val = train_X.iloc[cv_train_idx], train_X.iloc[cv_val_idx]
+                y_train, y_val = train_y.iloc[cv_train_idx], train_y.iloc[cv_val_idx]
+
+                self.model.fit(X_train, y_train)
+                y_pred = self.model.predict(X_val)
+                y_proba = self.model.predict_proba(X_val)[:, 1]
+                metrics = self._calculate_metrics(y_val, y_pred, y_proba)
+                metrics['fold'] = fold
+                cv_metrics.append(metrics)
+                logger.info(
+                    "Fold %d: AUC=%.3f Accuracy=%.3f", fold, metrics['auc'], metrics['accuracy']
+                )
+
         self.metrics_history = cv_metrics
-        
-        # Calculate average metrics
-        avg_metrics = {}
-        for key in cv_metrics[0].keys():
-            if key != 'fold':
-                avg_metrics[f'avg_{key}'] = np.mean([m[key] for m in cv_metrics])
-                avg_metrics[f'std_{key}'] = np.std([m[key] for m in cv_metrics])
-        
-        # Final training on all data
-        self.model.fit(X, y)
-        
-        return avg_metrics
+        metrics_summary: Dict[str, float] = {}
+        if cv_metrics:
+            for key in cv_metrics[0]:
+                if key == 'fold':
+                    continue
+                values = [m[key] for m in cv_metrics]
+                metrics_summary[f'cv_{key}_mean'] = float(np.mean(values))
+                metrics_summary[f'cv_{key}_std'] = float(np.std(values))
+
+        # Fit on training portion and evaluate validation set
+        self.model.fit(train_X, train_y)
+        if len(val_X) > 0:
+            val_pred = self.model.predict(val_X)
+            val_proba = self.model.predict_proba(val_X)[:, 1]
+            val_metrics = self._calculate_metrics(val_y, val_pred, val_proba)
+            metrics_summary.update({f'val_{k}': v for k, v in val_metrics.items()})
+
+        # Refit on train + validation and evaluate on hold-out test
+        combined_X = pd.concat([train_X, val_X], ignore_index=True)
+        combined_y = pd.concat([train_y, val_y], ignore_index=True)
+        self.model.fit(combined_X, combined_y)
+
+        if len(test_X) > 0:
+            test_pred = self.model.predict(test_X)
+            test_proba = self.model.predict_proba(test_X)[:, 1]
+            test_metrics = self._calculate_metrics(test_y, test_pred, test_proba)
+            metrics_summary.update({f'test_{k}': v for k, v in test_metrics.items()})
+
+        return metrics_summary
     
     def _calculate_metrics(self,
                           y_true: pd.Series,
