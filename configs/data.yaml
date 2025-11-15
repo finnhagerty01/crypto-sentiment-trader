@@ -40,6 +40,9 @@ reddit_limit_per_sub: 200
 reddit_min_score: 2
 market_data_limit: 1000
 reddit_min_length: 15
+apply_kalman_filter: true
+kalman_process_variance: 1.0e-5
+kalman_measurement_variance: 0.05
 
 # Feature engineering
 sentiment_half_life: "6H"

@@ -15,6 +15,8 @@ from sklearn.preprocessing import RobustScaler
 import warnings
 warnings.filterwarnings('ignore')
 
+from .filters import kalman_filter_series
+
 logger = logging.getLogger(__name__)
 
 class SentimentFeatureBuilder:
@@ -161,16 +163,25 @@ class SentimentFeatureBuilder:
         scores = group['score'].fillna(0).clip(upper=score_cap)
         engagement_weights = 1.0 + np.log1p(scores) / 10
         
-        # Combine weights
-        weights = time_weights * group.get('mention_strength', 1.0)
+        # Combine weights (time decay * mention strength * engagement)
+        mention_strength = group.get('mention_strength', 1.0)
+        weights = time_weights * mention_strength * engagement_weights
         weights = weights / weights.sum() if weights.sum() > 0 else np.ones(len(group)) / len(group)
-        
+
+        # Prepare engagement columns
+        comments = group['num_comments'] if 'num_comments' in group else pd.Series(0, index=group.index)
+
         # Compute weighted features
         features = {
             # Count features
             'post_count': len(group),
             'unique_authors': group['author'].nunique(),
-            
+
+            # Engagement statistics
+            'avg_score': float(group['score'].mean()),
+            'avg_comment_count': float(comments.mean()),
+            'avg_engagement_rate': float((group['score'] + comments).mean()),
+
             # Weighted sentiment features - SAFE (using time weights only)
             'sentiment_mean': float(np.sum(weights * group['vader_compound'])),
             'sentiment_std': float(group['vader_compound'].std()),
@@ -281,71 +292,89 @@ class MarketFeatureBuilder:
                                interval: str) -> pd.DataFrame:
         """Create technical features from market data."""
         df = df.copy()
-        
+
         # Ensure we have required columns
         required = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
         if not all(col in df.columns for col in required):
             logger.warning(f"Missing required columns for {symbol}")
             return pd.DataFrame()
-        
+
+        df.sort_values('timestamp', inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+        price_column = 'close'
+        if getattr(self.config, 'apply_kalman_filter', False):
+            smoothed = kalman_filter_series(
+                df['close'],
+                process_variance=getattr(self.config, 'kalman_process_variance', 1e-5),
+                measurement_variance=getattr(self.config, 'kalman_measurement_variance', 0.05)
+            )
+            df['close_smoothed'] = smoothed
+            price_column = 'close_smoothed'
+
         # Price returns at different horizons
-        for lag in [1, 3, 6, 12, 24]:
-            df[f'return_{lag}'] = np.log(df['close'] / df['close'].shift(lag))
-        
+        df['return_1'] = np.log(df[price_column] / df[price_column].shift(1))
+        for lag in [3, 6, 12, 24]:
+            df[f'return_{lag}'] = np.log(df[price_column] / df[price_column].shift(lag))
+
         # Volatility measures
         df['volatility_6'] = df['return_1'].rolling(6).std()
         df['volatility_24'] = df['return_1'].rolling(24).std()
         df['volatility_ratio'] = df['volatility_6'] / (df['volatility_24'] + 1e-9)
         df['range_expansion'] = (df['high'] - df['low']) / df['close']
-        df['true_range'] = df[['high', 'close.shift(1)']].max(axis=1) - df[['low', 'close.shift(1)']].min(axis=1)
-        
+        prev_close = df[price_column].shift(1)
+        df['true_range'] = (
+            np.maximum(df['high'], prev_close) - np.minimum(df['low'], prev_close)
+        )
+
         # Price momentum indicators
         df['momentum_score'] = (
-            (df['close'] > df['close'].shift(1)).astype(int) +
-            (df['close'] > df['close'].shift(3)).astype(int) +
-            (df['close'] > df['close'].shift(6)).astype(int)
+            (df[price_column] > df[price_column].shift(1)).astype(int) +
+            (df[price_column] > df[price_column].shift(3)).astype(int) +
+            (df[price_column] > df[price_column].shift(6)).astype(int)
         ) / 3
-        
+        df['momentum_12'] = df[price_column].pct_change(12)
+
         # RSI (Relative Strength Index)
-        df['rsi_14'] = self._calculate_rsi(df['close'], 14)
-        
+        df['rsi_14'] = self._calculate_rsi(df[price_column], 14)
+
         # MACD
-        exp1 = df['close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        exp1 = df[price_column].ewm(span=12, adjust=False).mean()
+        exp2 = df[price_column].ewm(span=26, adjust=False).mean()
         df['macd'] = exp1 - exp2
         df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
         df['macd_diff'] = df['macd'] - df['macd_signal']
-        
+
         # Volume features
         df['volume_ratio'] = df['volume'] / df['volume'].rolling(24).mean()
         df['volume_momentum'] = df['volume'].pct_change(6)
         df['volume_trend'] = df['volume'].rolling(6).mean() / df['volume'].rolling(24).mean()
         df['volume_spike'] = df['volume'] / df['volume'].rolling(24).quantile(0.75)
-        df['buy_pressure'] = df['taker_buy_base'] / df['volume']  # If available
+        if 'taker_buy_base' in df.columns:
+            df['buy_pressure'] = df['taker_buy_base'] / (df['volume'] + 1e-9)
+        else:
+            df['buy_pressure'] = np.nan
 
-        # SUPPORT/RESISTANCE
-        df['distance_from_high_24h'] = (df['close'] - df['high'].rolling(24).max()) / df['close']
-        df['distance_from_low_24h'] = (df['close'] - df['low'].rolling(24).min()) / df['close']
-        df['breaks_high'] = (df['close'] > df['high'].rolling(24).max()).astype(int)
-       
-        # CROSS-MARKET FEATURES
-        # Compare to BTC (market leader)
-        btc_returns = df[df['symbol'] == 'BTCUSDT']['return_1']
-        df['correlation_with_btc_rolling'] = df['return_1'].rolling(24).corr(btc_returns)
-        df['beta_to_btc'] = df['return_1'].rolling(24).cov(btc_returns) / btc_returns.rolling(24).var()
+        # Support/Resistance context
+        rolling_high = df[price_column].rolling(24).max()
+        rolling_low = df[price_column].rolling(24).min()
+        df['distance_from_high_24h'] = (df[price_column] - rolling_high) / df[price_column]
+        df['distance_from_low_24h'] = (df[price_column] - rolling_low) / df[price_column]
+        df['breaks_high'] = (df[price_column] > rolling_high).astype(int)
 
         # Price efficiency (how close to high/low)
-        df['price_position'] = (df['close'] - df['low']) / (df['high'] - df['low'] + 1e-9)
-        df['price_efficiency'] = 2 * df['price_position'] - 1  # Scale to [-1, 1]
-        
+        df['price_position'] = (df[price_column] - df['low']) / (df['high'] - df['low'] + 1e-9)
+        df['price_efficiency'] = 2 * df['price_position'] - 1
+
         # Microstructure
         df['spread'] = (df['high'] - df['low']) / df['close']
         df['overnight_gap'] = np.log(df['open'] / df['close'].shift(1))
-        
+
         # Add metadata
         df['symbol'] = symbol
         df['interval'] = interval
-        
+
+        df.dropna(inplace=True)
         return df
     
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
@@ -492,37 +521,41 @@ class FeaturePipeline:
                        market_df: pd.DataFrame,
                        interval: str) -> pd.DataFrame:
         """Merge sentiment and market features with proper alignment."""
-        if sentiment_df.empty or market_df.empty:
-            logger.warning("Cannot merge empty dataframes")
+        if market_df.empty:
+            logger.warning("Market feature dataframe is empty")
             return pd.DataFrame()
-        
-        # Ensure consistent types
-        sentiment_df['timestamp'] = pd.to_datetime(sentiment_df['timestamp'])
-        market_df['timestamp'] = pd.to_datetime(market_df['timestamp'])
-        
-        # Merge on timestamp, symbol, and interval
-        merged = pd.merge(
-        market_df,
-        sentiment_df,
-        on=['timestamp', 'symbol', 'interval'],
-        how='left'
-        )
-    
-        # Forward fill sentiment features
-        sentiment_cols = [col for col in sentiment_df.columns 
-                        if col not in ['timestamp', 'symbol', 'interval']]
-        
-        for col in sentiment_cols:
-            merged[col] = merged.groupby('symbol')[col].fillna(method='ffill', limit=6)
-        
-        # SAFETY: Shift sentiment features by 1 bar to ensure no lookahead
-        # Sentiment at time t predicts return from t to t+1
-        for col in sentiment_cols:
-            merged[f'{col}_lag1'] = merged.groupby('symbol')[col].shift(1)
-        
-        # Use lagged features for modeling
-        # Original features can be kept for analysis, but don't use in model
-        
+
+        market_df = market_df.copy()
+        market_df['timestamp'] = pd.to_datetime(market_df['timestamp'], utc=True)
+
+        if sentiment_df.empty:
+            logger.warning("Sentiment dataframe empty – continuing with market-only features")
+            merged = market_df
+            sentiment_cols: List[str] = []
+        else:
+            sentiment_df = sentiment_df.copy()
+            sentiment_df['timestamp'] = pd.to_datetime(sentiment_df['timestamp'], utc=True)
+            sentiment_cols = [
+                col for col in sentiment_df.columns
+                if col not in ['timestamp', 'symbol', 'interval']
+            ]
+
+            merged = market_df.merge(
+                sentiment_df,
+                on=['timestamp', 'symbol', 'interval'],
+                how='left'
+            )
+
+            # Forward fill sentiment features
+            for col in sentiment_cols:
+                merged[col] = merged.groupby('symbol')[col].fillna(method='ffill', limit=6)
+
+            # Shift to avoid lookahead bias
+            for col in sentiment_cols:
+                merged[f'{col}_lag1'] = merged.groupby('symbol')[col].shift(1)
+
+        merged.sort_values(['symbol', 'timestamp'], inplace=True)
+        merged.reset_index(drop=True, inplace=True)
         return merged
     
     def _create_labels(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -620,8 +653,11 @@ class FeaturePipeline:
         df = df[df.isnull().sum(axis=1) / len(df.columns) < max_nan_ratio]
         
         # Remove the last row per symbol (no forward return)
-        df = df.groupby('symbol').apply(lambda x: x.iloc[:-1]).reset_index(drop=True)
-        
+        df = df.groupby('symbol', group_keys=False).apply(
+            lambda x: x.iloc[:-1] if len(x) > 1 else x
+        )
+        df = df.reset_index(drop=True)
+
         return df
     
     def save_dataset(self, df: pd.DataFrame, interval: str):

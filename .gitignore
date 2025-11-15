@@ -8,8 +8,10 @@ __pycache__/
 .ipynb_checkpoints/
 # data
 data/
+!src/data/
 # OS/editor
 .DS_Store
 .vscode/
 models/
+!src/models/
 logs/

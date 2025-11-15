@@ -27,7 +27,8 @@ class TradingConfig:
     subreddits: List[str] = field(default_factory=list)
     reddit_limit_per_sub: int = 200
     reddit_min_score: int = 10
-    
+    reddit_min_length: int = 0
+
     # Market settings
     symbols: List[str] = field(default_factory=list)
     intervals: List[str] = field(default_factory=list)
@@ -50,6 +51,19 @@ class TradingConfig:
     raw_market_dir: Path = Path("data/raw/market")
     processed_dir: Path = Path("data/processed")
     models_dir: Path = Path("models")
+
+    # External services
+    arctic_shift_api_key: Optional[str] = field(
+        default_factory=lambda: os.getenv("ARCTIC_SHIFT_API_KEY")
+    )
+    arctic_shift_base_url: str = field(
+        default_factory=lambda: os.getenv("ARCTIC_SHIFT_BASE_URL", "https://api.arcticshift.com/v1")
+    )
+
+    # Data pre-processing options
+    apply_kalman_filter: bool = False
+    kalman_process_variance: float = 1e-5
+    kalman_measurement_variance: float = 0.05
     
     def __post_init__(self):
         """Create directories and validate configuration."""
@@ -67,15 +81,20 @@ class TradingConfig:
         """Load configuration from YAML file."""
         try:
             with open(config_path, 'r') as f:
-                data = yaml.safe_load(f)
-            
-            # Map YAML fields to dataclass fields
-            return cls(
-                subreddits=data.get('subreddits', []),
-                symbols=data.get('symbols', []),
-                intervals=data.get('intervals', []),
-                **data.get('trading_params', {})  # Additional params if present
-            )
+                data = yaml.safe_load(f) or {}
+
+            valid_fields = set(cls.__dataclass_fields__.keys())
+            kwargs: Dict[str, Any] = {}
+
+            for key, value in data.items():
+                if key == 'trading_params' and isinstance(value, dict):
+                    for t_key, t_value in value.items():
+                        if t_key in valid_fields:
+                            kwargs[t_key] = t_value
+                elif key in valid_fields:
+                    kwargs[key] = value
+
+            return cls(**kwargs)
         except Exception as e:
             logger.error(f"Failed to load config from {config_path}: {e}")
             raise
