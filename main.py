@@ -26,11 +26,13 @@ from src.features.feature_builder import FeaturePipeline
 from src.models.trading_models import TradingModelPipeline, TradingBacktester
 
 # Setup logging
+LOG_DIR = Path(__file__).parent / 'logs'
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f'logs/crypto_trader_{datetime.now():%Y%m%d}.log'),
+        logging.FileHandler(LOG_DIR / f'crypto_trader_{datetime.now():%Y%m%d}.log'),
         logging.StreamHandler()
     ]
 )
