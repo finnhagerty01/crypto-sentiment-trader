@@ -84,8 +84,13 @@ class EngagementValidator:
             DataFrame with correlations at different time lags
         """
         snapshots = self.tracker.load_snapshots()
-        symbol_posts = snapshots[snapshots.get('symbol') == symbol]
-        
+
+        # Return empty if no snapshots or no symbol column
+        if snapshots.empty or 'symbol' not in snapshots.columns:
+            return pd.DataFrame()
+
+        symbol_posts = snapshots[snapshots['symbol'] == symbol]
+
         if symbol_posts.empty:
             return pd.DataFrame()
         
@@ -148,8 +153,13 @@ class EngagementValidator:
             Comparison statistics
         """
         snapshots = self.tracker.load_snapshots()
-        symbol_posts = snapshots[snapshots.get('symbol') == symbol].copy()
-        
+
+        # Return empty if no snapshots or no symbol column
+        if snapshots.empty or 'symbol' not in snapshots.columns:
+            return {}
+
+        symbol_posts = snapshots[snapshots['symbol'] == symbol].copy()
+
         if symbol_posts.empty:
             return {}
         
@@ -246,15 +256,21 @@ class EngagementValidator:
                 'avg_combined_corr': np.mean(values['combined_corrs'])
             }
         
-        # Find optimal lag
-        best_lag = max(findings.items(), 
-                      key=lambda x: abs(x[1]['avg_combined_corr']))
-        
-        findings['optimal_lag'] = {
-            'lag': best_lag[0],
-            'correlation': best_lag[1]['avg_combined_corr']
-        }
-        
+        # Find optimal lag if we have any findings
+        if findings:
+            best_lag = max(findings.items(),
+                          key=lambda x: abs(x[1]['avg_combined_corr']))
+
+            findings['optimal_lag'] = {
+                'lag': best_lag[0],
+                'correlation': best_lag[1]['avg_combined_corr']
+            }
+        else:
+            findings['optimal_lag'] = {
+                'lag': None,
+                'correlation': 0.0
+            }
+
         return findings
     
     def _save_validation_report(self, results: Dict):
@@ -328,7 +344,11 @@ class EngagementValidator:
         
         # 3. Engagement Distribution
         snapshots = self.tracker.load_snapshots()
-        symbol_posts = snapshots[snapshots.get('symbol') == symbol]
+        if not snapshots.empty and 'symbol' in snapshots.columns:
+            symbol_posts = snapshots[snapshots['symbol'] == symbol]
+        else:
+            symbol_posts = pd.DataFrame()
+
         if not symbol_posts.empty:
             ax = axes[1, 0]
             ax.hist(symbol_posts['engagement_rate_snapshot'], bins=30, 

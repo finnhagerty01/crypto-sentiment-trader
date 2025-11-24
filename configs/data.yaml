@@ -25,25 +25,17 @@ symbols:
 # Time intervals for analysis
 intervals:
   - 1h
-  - 4h
 
 # Trading parameters
 trading_params:
-  enter_threshold: 0.52
-  exit_threshold: 0.48
+  enter_threshold: 0.60  # Increased for safety
+  exit_threshold: 0.55
   min_hold_bars: 2
-  fee_per_side: 0.0010  # 0.10% per trade side
-  slippage_per_side: 0.0005  # 0.05% slippage
+  fee_per_side: 0.0010
+  slippage_per_side: 0.0005
 
 # Data collection settings
-reddit_limit_per_sub: 200
+reddit_limit_per_sub: 500  # INCREASED to fix "Cold Start" lag issue
 reddit_min_score: 2
 market_data_limit: 1000
 reddit_min_length: 15
-apply_kalman_filter: true
-kalman_process_variance: 1.0e-5
-kalman_measurement_variance: 0.05
-
-# Feature engineering
-sentiment_half_life: "6H"
-sentiment_lookback_bars: 24

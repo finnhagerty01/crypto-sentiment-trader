@@ -57,7 +57,7 @@ class TradingConfig:
         default_factory=lambda: os.getenv("ARCTIC_SHIFT_API_KEY")
     )
     arctic_shift_base_url: str = field(
-        default_factory=lambda: os.getenv("ARCTIC_SHIFT_BASE_URL", "https://api.arcticshift.com/v1")
+        default_factory=lambda: os.getenv("ARCTIC_SHIFT_BASE_URL", "https://arctic-shift.photon-reddit.com/api")
     )
 
     # Data pre-processing options
