@@ -33,7 +33,7 @@ logger = logging.getLogger("MainOrchestrator")
 
 # --- CONFIGURATION ---
 DRY_RUN = True  # <--- SET TO FALSE ONLY WHEN READY TO LOSE MONEY
-LOOP_INTERVAL = 60  # Run every 1 hour (3600 seconds)
+LOOP_INTERVAL = 3600  # Run every 1 hour (3600 seconds)
 
 def main():
     logger.info("Starting Crypto Sentiment Trading Bot...")
