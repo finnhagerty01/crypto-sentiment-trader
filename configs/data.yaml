@@ -1,3 +1,5 @@
+# configs/data.yaml
+
 # Subreddits to monitor
 subreddits:
   - CryptoCurrency
@@ -22,20 +24,20 @@ symbols:
   - DOTUSDT
   - ATOMUSDT
 
-# Time intervals for analysis
+# Time intervals
 intervals:
   - 1h
 
-# Trading parameters
+# Trading parameters (THESE OVERWRITE CONFIG.PY)
 trading_params:
-  enter_threshold: 0.60  # Increased for safety
+  enter_threshold: 0.60   # Make sure this matches your desired logic
   exit_threshold: 0.55
-  min_hold_bars: 2
-  fee_per_side: 0.0010
+  min_hold_bars: 2        # This effectively implements your "Hold" logic
+  fee_per_side: 0.00010
   slippage_per_side: 0.0005
 
-# Data collection settings
-reddit_limit_per_sub: 500  # INCREASED to fix "Cold Start" lag issue
+# Data settings
+reddit_limit_per_sub: 500 # The YAML value (500) overrides the Python default (200)
 reddit_min_score: 2
 market_data_limit: 1000
 reddit_min_length: 15

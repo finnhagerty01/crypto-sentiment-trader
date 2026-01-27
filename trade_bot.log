@@ -85,3 +85,106 @@
 2025-11-24 09:55:29,156 - MainOrchestrator - INFO - XRPUSDT: No strong signal. Holding.
 2025-11-24 09:55:29,156 - MainOrchestrator - INFO - Cycle complete. Sleeping for 60 seconds...
 2025-11-24 09:55:47,399 - MainOrchestrator - INFO - Bot stopped by user.
+2025-11-25 14:02:01,057 - MainOrchestrator - INFO - Starting Crypto Sentiment Trading Bot...
+2025-11-25 14:02:01,060 - MainOrchestrator - INFO - Loaded config for symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOGEUSDT', 'LINKUSDT', 'MATICUSDT', 'DOTUSDT', 'ATOMUSDT']
+2025-11-25 14:02:01,203 - src.data.reddit_client - INFO - Connected to Reddit Official API
+2025-11-25 14:02:01,779 - MainOrchestrator - INFO - --- STARTING INITIAL TRAINING ---
+2025-11-25 14:02:01,779 - MainOrchestrator - INFO - Fetching historical Reddit data...
+2025-11-25 14:02:01,779 - src.data.reddit_client - INFO - Fetching last ~1000 posts per subreddit via PRAW...
+2025-11-25 14:02:15,836 - src.data.reddit_client - INFO - Fetched 950 posts from r/CryptoCurrency
+2025-11-25 14:02:27,820 - src.data.reddit_client - INFO - Fetched 982 posts from r/Bitcoin
+2025-11-25 14:02:31,318 - src.data.reddit_client - INFO - Fetched 117 posts from r/Ethereum
+2025-11-25 14:02:41,087 - src.data.reddit_client - INFO - Fetched 565 posts from r/CryptoMarkets
+2025-11-25 14:02:42,831 - src.data.reddit_client - INFO - Fetched 98 posts from r/altcoin
+2025-11-25 14:02:46,871 - src.data.reddit_client - INFO - Fetched 240 posts from r/defi
+2025-11-25 14:02:46,892 - MainOrchestrator - INFO - Fetching historical Market data...
+2025-11-25 14:02:49,291 - MainOrchestrator - INFO - Analyzing historical sentiment...
+2025-11-25 14:02:51,780 - MainOrchestrator - INFO - Building feature set...
+2025-11-25 14:02:51,817 - MainOrchestrator - INFO - Training Random Forest model...
+2025-11-25 14:02:52,224 - src.analysis.models - INFO - Model Trained. Precision on Test Set: 0.30
+2025-11-25 14:02:52,225 - MainOrchestrator - INFO - --- TRAINING COMPLETE ---
+2025-11-25 14:02:52,225 - MainOrchestrator - INFO - --- STARTING LIVE CYCLE ---
+2025-11-25 14:02:52,225 - MainOrchestrator - INFO - Fetching live data...
+2025-11-25 14:03:38,292 - MainOrchestrator - ERROR - Unexpected error in loop: name 'timezone' is not defined
+Traceback (most recent call last):
+  File "/Users/finnhagerty/CryptoProject/crypto-sentiment-trader/main.py", line 99, in main
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+                               ^^^^^^^^
+NameError: name 'timezone' is not defined
+2025-11-25 14:04:38,297 - MainOrchestrator - INFO - --- STARTING LIVE CYCLE ---
+2025-11-25 14:04:38,298 - MainOrchestrator - INFO - Fetching live data...
+2025-11-25 14:05:22,038 - MainOrchestrator - ERROR - Unexpected error in loop: name 'timezone' is not defined
+Traceback (most recent call last):
+  File "/Users/finnhagerty/CryptoProject/crypto-sentiment-trader/main.py", line 99, in main
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+                               ^^^^^^^^
+NameError: name 'timezone' is not defined
+2025-11-25 14:06:18,223 - MainOrchestrator - INFO - Starting Crypto Sentiment Trading Bot...
+2025-11-25 14:06:18,226 - MainOrchestrator - INFO - Loaded config for symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOGEUSDT', 'LINKUSDT', 'MATICUSDT', 'DOTUSDT', 'ATOMUSDT']
+2025-11-25 14:06:18,228 - src.data.reddit_client - INFO - Connected to Reddit Official API
+2025-11-25 14:06:18,808 - MainOrchestrator - INFO - --- STARTING INITIAL TRAINING ---
+2025-11-25 14:06:18,809 - MainOrchestrator - INFO - Fetching historical Reddit data...
+2025-11-25 14:06:18,809 - src.data.reddit_client - INFO - Fetching last ~1000 posts per subreddit via PRAW...
+2025-11-25 14:06:32,739 - src.data.reddit_client - INFO - Fetched 950 posts from r/CryptoCurrency
+2025-11-25 14:06:43,955 - src.data.reddit_client - INFO - Fetched 982 posts from r/Bitcoin
+2025-11-25 14:06:46,692 - src.data.reddit_client - INFO - Fetched 117 posts from r/Ethereum
+2025-11-25 14:06:55,202 - src.data.reddit_client - INFO - Fetched 565 posts from r/CryptoMarkets
+2025-11-25 14:06:56,900 - src.data.reddit_client - INFO - Fetched 98 posts from r/altcoin
+2025-11-25 14:07:00,302 - src.data.reddit_client - INFO - Fetched 240 posts from r/defi
+2025-11-25 14:07:00,308 - MainOrchestrator - INFO - Fetching historical Market data...
+2025-11-25 14:07:02,349 - MainOrchestrator - INFO - Analyzing historical sentiment...
+2025-11-25 14:07:04,840 - MainOrchestrator - INFO - Building feature set...
+2025-11-25 14:07:04,868 - MainOrchestrator - INFO - Training Random Forest model...
+2025-11-25 14:07:05,260 - src.analysis.models - INFO - Model Trained. Precision on Test Set: 0.30
+2025-11-25 14:07:05,261 - MainOrchestrator - INFO - --- TRAINING COMPLETE ---
+2025-11-25 14:07:05,261 - MainOrchestrator - INFO - --- STARTING LIVE CYCLE ---
+2025-11-25 14:07:05,261 - MainOrchestrator - INFO - Fetching live data...
+2025-11-25 14:07:48,580 - MainOrchestrator - INFO - Saved 2952 posts to data/master_reddit.csv
+2025-11-25 14:07:48,580 - MainOrchestrator - INFO - Reddit Database Updated: 2952 posts in memory.
+2025-11-25 14:07:53,606 - MainOrchestrator - INFO - Predicting on 11 symbols from: 2025-11-25 20:00:00
+2025-11-25 14:07:53,611 - MainOrchestrator - INFO - SIGNAL for ADAUSDT: HOLD
+2025-11-25 14:07:53,611 - MainOrchestrator - INFO - ADAUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,611 - MainOrchestrator - INFO - SIGNAL for ATOMUSDT: HOLD
+2025-11-25 14:07:53,611 - MainOrchestrator - INFO - ATOMUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,611 - MainOrchestrator - INFO - SIGNAL for AVAXUSDT: HOLD
+2025-11-25 14:07:53,611 - MainOrchestrator - INFO - AVAXUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - SIGNAL for BNBUSDT: HOLD
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - BNBUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - SIGNAL for BTCUSDT: HOLD
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - BTCUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - SIGNAL for DOGEUSDT: HOLD
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - DOGEUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - SIGNAL for DOTUSDT: HOLD
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - DOTUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - SIGNAL for ETHUSDT: HOLD
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - ETHUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - SIGNAL for LINKUSDT: HOLD
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - LINKUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,612 - MainOrchestrator - INFO - SIGNAL for SOLUSDT: HOLD
+2025-11-25 14:07:53,613 - MainOrchestrator - INFO - SOLUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,613 - MainOrchestrator - INFO - SIGNAL for XRPUSDT: HOLD
+2025-11-25 14:07:53,613 - MainOrchestrator - INFO - XRPUSDT: No strong signal. Holding.
+2025-11-25 14:07:53,613 - MainOrchestrator - INFO - Cycle complete. Sleeping for 3600 seconds...
+2025-11-25 14:08:36,077 - MainOrchestrator - INFO - Bot stopped by user.
+2025-12-18 18:46:28,889 - MainOrchestrator - INFO - Starting Sleek Bot... DRY_RUN=True
+2025-12-18 18:46:29,009 - src.data.reddit_client - INFO - Connected to Reddit Official API
+2025-12-18 18:46:29,493 - MainOrchestrator - INFO - --- INITIAL TRAINING ---
+2025-12-18 18:46:29,493 - src.data.reddit_client - INFO - Fetching last ~1000 posts per subreddit via PRAW...
+2025-12-18 18:46:42,171 - src.data.reddit_client - INFO - Fetched 961 posts from r/CryptoCurrency
+2025-12-18 18:46:54,359 - src.data.reddit_client - INFO - Fetched 989 posts from r/Bitcoin
+2025-12-18 18:46:57,042 - src.data.reddit_client - INFO - Fetched 143 posts from r/Ethereum
+2025-12-18 18:47:06,855 - src.data.reddit_client - INFO - Fetched 543 posts from r/CryptoMarkets
+2025-12-18 18:47:08,680 - src.data.reddit_client - INFO - Fetched 93 posts from r/altcoin
+2025-12-18 18:47:13,112 - src.data.reddit_client - INFO - Fetched 315 posts from r/defi
+2025-12-18 18:47:19,015 - src.analysis.models - INFO - Model Trained on 7370 rows using 24 features.
+2025-12-18 18:47:19,066 - MainOrchestrator - INFO - --- STARTING LIVE CYCLE ---
+2025-12-18 18:48:05,870 - MainOrchestrator - INFO - Database updated: 4070 posts.
+2025-12-18 18:48:13,254 - MainOrchestrator - INFO - Predicting on 11 symbols (Time: 2025-12-19 00:00:00)
+2025-12-18 18:48:13,351 - MainOrchestrator - INFO - [PAPER] BOUGHT 287.4389 ADAUSDT @ 0.3479. Cash Left: $900.00
+2025-12-18 18:48:13,586 - MainOrchestrator - INFO - [PAPER] Signal SELL AVAXUSDT, but no position held.
+2025-12-18 18:48:13,802 - MainOrchestrator - INFO - [PAPER] Signal SELL DOGEUSDT, but no position held.
+2025-12-18 18:48:13,874 - MainOrchestrator - INFO - [PAPER] Signal SELL DOTUSDT, but no position held.
+2025-12-18 18:48:14,086 - MainOrchestrator - INFO - [PAPER] Signal SELL SOLUSDT, but no position held.
+2025-12-18 18:48:14,157 - MainOrchestrator - INFO - [PAPER] BOUGHT 56.4016 XRPUSDT @ 1.773. Cash Left: $800.00
+2025-12-18 18:48:14,157 - MainOrchestrator - INFO - Sleeping 3600s...
+2025-12-18 18:49:38,803 - MainOrchestrator - INFO - Bot Stopped.

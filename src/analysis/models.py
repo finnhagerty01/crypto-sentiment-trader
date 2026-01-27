@@ -1,118 +1,127 @@
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score
 import logging
 
 logger = logging.getLogger(__name__)
 
 class TradingModel:
-    def __init__(self, enter_threshold: float = 0.52):
-        self.model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42, class_weight='balanced')
+    def __init__(self, enter_threshold: float = 0.60, sell_threshold: float = 0.60, use_proba: bool = False):
+        self.model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=4,
+            min_samples_leaf=10,
+            min_samples_split=2,
+            max_features=0.5,
+            bootstrap=True,
+            random_state=42,
+            class_weight="balanced",
+            n_jobs=-1
+        )
         self.features = []
         self.enter_threshold = enter_threshold
+        self.sell_threshold = sell_threshold
+        self.use_proba = use_proba
 
-    def prepare_features(self, market_df: pd.DataFrame, sentiment_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Merges Market + Sentiment and creates technical features.
-        """
-        # Defensive Check
-        if 'timestamp' not in sentiment_df.columns:
-            logger.error(f"Sentiment DataFrame missing 'timestamp' column. Columns found: {sentiment_df.columns}")
+    def prepare_features(self, market_df: pd.DataFrame, sentiment_df: pd.DataFrame, is_inference: bool = False) -> pd.DataFrame:
+        if market_df is None or market_df.empty:
+            logger.error("Market DataFrame is empty")
             return pd.DataFrame()
 
-        # Ensure timestamps are aligned (floor to hour)
+        if sentiment_df is None:
+            sentiment_df = pd.DataFrame()
+
         market_df = market_df.copy()
         sentiment_df = sentiment_df.copy()
-        
+
+        # Align timestamps to hourly bins (UTC-naive)
         market_df['timestamp'] = pd.to_datetime(market_df['timestamp']).dt.floor('h')
-        sentiment_df['timestamp'] = pd.to_datetime(sentiment_df['timestamp']).dt.tz_localize(None).dt.floor('h')
 
-        # Merge
+        if not sentiment_df.empty:
+            if 'timestamp' not in sentiment_df.columns:
+                logger.error("Sentiment DataFrame missing 'timestamp'")
+                return pd.DataFrame()
+            sentiment_df['timestamp'] = pd.to_datetime(sentiment_df['timestamp']).dt.tz_localize(None).dt.floor('h')
+
+        # LEFT JOIN: keep market hours even if no reddit posts
         df = pd.merge(market_df, sentiment_df, on=['timestamp', 'symbol'], how='left')
-        
-        # Fill missing sentiment
-        df['sentiment_mean'] = df['sentiment_mean'].fillna(0)
-        df['post_volume'] = df['post_volume'].fillna(0)
-        df['comment_volume'] = df['comment_volume'].fillna(0)
 
-        # --- FEATURE ENGINEERING ---
-        
-        # 1. Returns (Current Hour)
-        # Calculate per symbol to avoid cross-contamination
+        # Zero-fill reddit features (quiet hour is valid state)
+        if 'sentiment_mean' not in df.columns:
+            df['sentiment_mean'] = 0.0
+        else:
+            df['sentiment_mean'] = df['sentiment_mean'].fillna(0.0)
+
+        if 'post_volume' not in df.columns:
+            df['post_volume'] = 0.0
+        else:
+            df['post_volume'] = df['post_volume'].fillna(0.0)
+
+        # Price return
         df['hourly_return'] = df.groupby('symbol')['close'].pct_change()
-        
-        # 2. Lags (Use PAST data to predict FUTURE)
-        for lag in [1, 2, 3]:
-            df[f'sentiment_lag_{lag}'] = df.groupby('symbol')['sentiment_mean'].shift(lag)
-            df[f'return_lag_{lag}'] = df.groupby('symbol')['hourly_return'].shift(lag)
-            df[f'volume_lag_{lag}'] = df.groupby('symbol')['post_volume'].shift(lag)
-        
-        # 3. Target (Next hour return)
-        # We take the hourly_return we just calculated and shift it BACKWARDS by 1
-        # Row T now contains the return that happened at T+1
-        df['target_return'] = df.groupby('symbol')['hourly_return'].shift(-1)
-        
-        # 4. Label (1 if next hour return > 0.5%)
-        df['target'] = (df['target_return'] > 0.005).astype(int)
 
-        df = df.dropna()
-        
-        # Define features (exclude target, timestamp, symbol, and the raw forward-looking target_return)
-        self.features = [c for c in df.columns if 'lag' in c]
-        
+        # Multi-lag features (deterministic feature list)
+        lags = [1, 2, 3, 6, 12, 24, 36, 48]
+        lag_cols = []
+        for lag in lags:
+            s = f'sent_lag_{lag}'
+            v = f'vol_lag_{lag}'
+            r = f'ret_lag_{lag}'
+
+            df[s] = df.groupby('symbol')['sentiment_mean'].shift(lag)
+            df[v] = df.groupby('symbol')['post_volume'].shift(lag)
+            df[r] = df.groupby('symbol')['hourly_return'].shift(lag)
+
+            lag_cols.extend([s, v, r])
+
+        self.features = lag_cols
+
+        if not is_inference:
+            # Training targets
+            df['target_return'] = df.groupby('symbol')['hourly_return'].shift(-1)
+
+            conditions = [
+                (df['target_return'] > 0.005),
+                (df['target_return'] < -0.005)
+            ]
+            df['target'] = np.select(conditions, [1, -1], default=0)
+
+            # Drop rows that are not fully defined
+            df = df.dropna(subset=self.features + ['target_return', 'target'])
+        else:
+            # Inference: only drop rows missing lag history (NOT because volume==0)
+            df = df.dropna(subset=self.features)
+
         return df
 
     def train(self, df: pd.DataFrame):
-        if df.empty:
-            logger.warning("Training DataFrame is empty!")
-            return None
-
-        X = df[self.features]
-        y = df['target']
-        
-        # Simple time-based split
-        split = int(len(X) * 0.8)
-        X_train, X_test = X.iloc[:split], X.iloc[split:]
-        y_train, y_test = y.iloc[:split], y.iloc[split:]
-
-        if len(X_train) < 10:
-            logger.warning("Not enough data to train.")
-            return None
-
-        self.model.fit(X_train, y_train)
-        
-        preds = self.model.predict(X_test)
-        precision = precision_score(y_test, preds, zero_division=0)
-        logger.info(f"Model Trained. Precision on Test Set: {precision:.2f}")
-        
+        if df.empty: return None
+        self.model.fit(df[self.features], df['target'])
+        logger.info(f"Model Trained on {len(df)} rows using {len(self.features)} features.")
         return self.model
 
     def predict(self, recent_data: pd.DataFrame) -> dict:
         """
-        Generates dictionary of {symbol: 'BUY'/'HOLD'}
+        Uses ArgMax Logic (Winner Takes All).
         """
         if recent_data.empty: return {}
         
-        # Ensure we have the same features as training
-        missing_feats = [f for f in self.features if f not in recent_data.columns]
-        if missing_feats:
-            logger.warning(f"Prediction data missing features: {missing_feats}")
+        missing = [f for f in self.features if f not in recent_data.columns]
+        if missing:
+            logger.warning(f"Missing features: {missing}")
             return {}
 
         X = recent_data[self.features]
-        probs = self.model.predict_proba(X)
-        
-        # Get probability of Class 1 (Buy)
-        buy_probs = probs[:, 1]
+        preds = self.model.predict(X)
         
         signals = {}
         for i, symbol in enumerate(recent_data['symbol']):
-            prob = buy_probs[i]
-            if prob > self.enter_threshold: 
+            prediction = preds[i]
+            if prediction == 1:
                 signals[symbol] = "BUY"
-                logger.info(f"Buy Signal for {symbol} (Conf: {prob:.2f})")
+            elif prediction == -1:
+                signals[symbol] = "SELL"
             else:
                 signals[symbol] = "HOLD"
+                
         return signals

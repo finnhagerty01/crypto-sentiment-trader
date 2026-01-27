@@ -42,9 +42,9 @@ class TradingConfig:
     enter_threshold: float = 0.60
     exit_threshold: float = 0.55
     min_hold_bars: int = 0
-    fee_per_side: float = 0.0010
+    fee_per_side: float = 0.00010
     slippage_per_side: float = 0.0005
-    
+
     # Paths
     data_dir: Path = Path("data")
     raw_reddit_dir: Path = Path("data/raw/reddit")
