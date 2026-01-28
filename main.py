@@ -13,7 +13,7 @@ from src.utils.config import TradingConfig
 from src.data.reddit_client import RedditClient
 from src.data.market_client import MarketClient
 from src.features.sentiment_advanced import EnhancedSentimentAnalyzer
-from src.analysis.models import TradingModel
+from src.models.trading_model import ImprovedTradingModel
 from src.execution.live import BinanceExecutor
 
 # Setup Logging
@@ -132,7 +132,7 @@ def main():
     reddit_client = RedditClient(subreddits=config.subreddits)
     market_client = MarketClient(config)
     sentiment_analyzer = EnhancedSentimentAnalyzer(symbols=config.symbols)
-    model = TradingModel()
+    model = ImprovedTradingModel()
     executor = BinanceExecutor()
     COOLDOWN_HOURS = 4  # Wait 4 hours after selling before buying same symbol
     MIN_HOLD_HOURS = 2  # Minimum hold time for a position
@@ -249,11 +249,13 @@ def main():
                 except Exception:
                     pass
 
-            for symbol, action in signals.items():
+            for symbol, signal in signals.items():
+                action = signal['action']
+                confidence = signal['confidence']
                 price = price_map.get(symbol)
                 if price is None:
                     continue
-                
+
                 # Check current holding state
                 pos = ledger.positions.get(symbol, {})
                 current_qty = pos.get("qty", 0.0)
@@ -262,16 +264,15 @@ def main():
                 if action == "BUY":
                     # GATE 1: State Awareness - Don't double buy
                     if is_holding:
-                        # logger.info(f"Skipping BUY {symbol}: Already holding.")
                         continue
-                        
+
                     # GATE 2: Cooldown Check
                     last_exit = ledger.last_exit.get(symbol)
                     if last_exit:
                         # Ensure timezone awareness compatibility
                         if last_exit.tzinfo is None:
                             last_exit = last_exit.replace(tzinfo=timezone.utc)
-                            
+
                         hours_since_exit = (current_time - last_exit).total_seconds() / 3600
                         if hours_since_exit < COOLDOWN_HOURS:
                             logger.info(f"COOLDOWN BLOCKED BUY {symbol}: Exited {hours_since_exit:.1f}h ago (<{COOLDOWN_HOURS}h)")
@@ -280,11 +281,13 @@ def main():
                     if DRY_RUN:
                         ok = ledger.buy(symbol, mid_price=price, notional_usdt=TRADE_NOTIONAL_USDT, current_time=current_time)
                         if ok:
-                            logger.info(f"[PAPER] BUY {symbol} notional=${TRADE_NOTIONAL_USDT:.2f} mid={price:.6f}")
+                            logger.info(
+                                f"[PAPER] BUY {symbol} notional=${TRADE_NOTIONAL_USDT:.2f} "
+                                f"mid={price:.6f} conf={confidence:.2f}"
+                            )
                         else:
                             logger.info(f"[PAPER] BUY skipped (insufficient cash) {symbol}")
                     else:
-                        # Real execution code...
                         quantity = round(TRADE_NOTIONAL_USDT / price, 5)
                         executor.execute_order(symbol, "BUY", quantity)
 
@@ -292,14 +295,14 @@ def main():
                     # GATE 1: State Awareness - Can't sell what you don't have
                     if not is_holding:
                         continue
-                        
+
                     # GATE 3: Minimum Hold Time
                     entry_ts = pos.get("entry_ts")
                     if entry_ts:
-                         # Ensure timezone awareness
+                        # Ensure timezone awareness
                         if entry_ts.tzinfo is None:
                             entry_ts = entry_ts.replace(tzinfo=timezone.utc)
-                            
+
                         hours_held = (current_time - entry_ts).total_seconds() / 3600
                         if hours_held < MIN_HOLD_HOURS:
                             logger.info(f"MIN HOLD BLOCKED SELL {symbol}: Held {hours_held:.1f}h (<{MIN_HOLD_HOURS}h)")
@@ -308,7 +311,7 @@ def main():
                     if DRY_RUN:
                         ok = ledger.sell_all(symbol, mid_price=price, current_time=current_time)
                         if ok:
-                            logger.info(f"[PAPER] SELL_ALL {symbol} mid={price:.6f}")
+                            logger.info(f"[PAPER] SELL_ALL {symbol} mid={price:.6f} conf={confidence:.2f}")
                     else:
                         executor.execute_order(symbol, "SELL", quantity=None)
 
