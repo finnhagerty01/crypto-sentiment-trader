@@ -3,6 +3,8 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 import logging
 
+from src.features.technical import add_technical_indicators
+
 logger = logging.getLogger(__name__)
 
 class TradingModel:
@@ -37,14 +39,20 @@ class TradingModel:
         # Align timestamps to hourly bins (UTC-naive)
         market_df['timestamp'] = pd.to_datetime(market_df['timestamp']).dt.floor('h')
 
+        # Add technical indicators BEFORE merging with sentiment
+        logger.info("Adding technical indicators...")
+        market_df = add_technical_indicators(market_df)
+
         if not sentiment_df.empty:
             if 'timestamp' not in sentiment_df.columns:
                 logger.error("Sentiment DataFrame missing 'timestamp'")
                 return pd.DataFrame()
             sentiment_df['timestamp'] = pd.to_datetime(sentiment_df['timestamp']).dt.tz_localize(None).dt.floor('h')
-
-        # LEFT JOIN: keep market hours even if no reddit posts
-        df = pd.merge(market_df, sentiment_df, on=['timestamp', 'symbol'], how='left')
+            # LEFT JOIN: keep market hours even if no reddit posts
+            df = pd.merge(market_df, sentiment_df, on=['timestamp', 'symbol'], how='left')
+        else:
+            # No sentiment data - just use market data
+            df = market_df.copy()
 
         # Zero-fill reddit features (quiet hour is valid state)
         if 'sentiment_mean' not in df.columns:
@@ -57,10 +65,11 @@ class TradingModel:
         else:
             df['post_volume'] = df['post_volume'].fillna(0.0)
 
-        # Price return
-        df['hourly_return'] = df.groupby('symbol')['close'].pct_change()
+        # Price return (may already exist from technical indicators as return_1h)
+        if 'hourly_return' not in df.columns:
+            df['hourly_return'] = df.groupby('symbol')['close'].pct_change()
 
-        # Multi-lag features (deterministic feature list)
+        # Multi-lag features for sentiment (deterministic feature list)
         lags = [1, 2, 3, 6, 12, 24, 36, 48]
         lag_cols = []
         for lag in lags:
@@ -74,7 +83,33 @@ class TradingModel:
 
             lag_cols.extend([s, v, r])
 
-        self.features = lag_cols
+        # Technical indicator features to use in model
+        technical_features = [
+            # RSI
+            'rsi_14', 'rsi_6', 'rsi_divergence',
+            # MACD
+            'macd_histogram', 'macd_crossover',
+            # Bollinger Bands
+            'bb_percent_b', 'bb_bandwidth', 'bb_squeeze',
+            # ATR
+            'atr_14_pct', 'atr_expansion',
+            # ADX / Trend
+            'adx', 'trend_strength',
+            # Moving Averages
+            'ma_spread', 'price_above_sma20',
+            # Volume
+            'volume_ratio', 'volume_spike',
+            'mfi',
+            # Price Action
+            'return_1h', 'return_4h',
+            'dist_from_24h_high', 'dist_from_24h_low'
+        ]
+
+        # Only include technical features that exist in the DataFrame
+        available_technical = [f for f in technical_features if f in df.columns]
+
+        self.features = lag_cols + available_technical
+        logger.info(f"Using {len(self.features)} features: {len(lag_cols)} lag + {len(available_technical)} technical")
 
         if not is_inference:
             # Training targets
