@@ -12,7 +12,7 @@ sys.path.append(str(Path(__file__).parent / 'src'))
 from src.utils.config import TradingConfig
 from src.data.reddit_client import RedditClient
 from src.data.market_client import MarketClient
-from src.analysis.sentiment import SentimentAnalyzer
+from src.features.sentiment_advanced import EnhancedSentimentAnalyzer
 from src.analysis.models import TradingModel
 from src.execution.live import BinanceExecutor
 
@@ -131,7 +131,7 @@ def main():
     config = TradingConfig.from_yaml("configs/data.yaml")
     reddit_client = RedditClient(subreddits=config.subreddits)
     market_client = MarketClient(config)
-    sentiment_analyzer = SentimentAnalyzer(symbols=config.symbols)
+    sentiment_analyzer = EnhancedSentimentAnalyzer(symbols=config.symbols)
     model = TradingModel()
     executor = BinanceExecutor()
     COOLDOWN_HOURS = 4  # Wait 4 hours after selling before buying same symbol

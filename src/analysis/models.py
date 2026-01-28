@@ -105,10 +105,31 @@ class TradingModel:
             'dist_from_24h_high', 'dist_from_24h_low'
         ]
 
+        # Advanced sentiment features (from EnhancedSentimentAnalyzer)
+        sentiment_features = [
+            # Dynamics
+            'sentiment_velocity', 'sentiment_acceleration',
+            'sentiment_macd', 'sentiment_rsi', 'sentiment_reversal',
+            # Distribution
+            'sentiment_std', 'sentiment_consensus',
+            'extreme_bullish_ratio', 'extreme_bearish_ratio',
+            # Engagement
+            'sentiment_engagement_weighted', 'sentiment_high_engagement',
+            'total_engagement',
+            # Cross-Symbol
+            'market_sentiment', 'sentiment_vs_market', 'sentiment_z_score',
+            # Regime
+            'sentiment_regime_numeric'
+        ]
+
         # Only include technical features that exist in the DataFrame
         available_technical = [f for f in technical_features if f in df.columns]
 
-        self.features = lag_cols + available_technical
+        # Only include sentiment features that exist in the DataFrame
+        available_sentiment = [f for f in sentiment_features if f in df.columns]
+
+        self.features = lag_cols + available_technical + available_sentiment
+        logger.info(f"Sentiment features included: {len(available_sentiment)}")
         logger.info(f"Using {len(self.features)} features: {len(lag_cols)} lag + {len(available_technical)} technical")
 
         if not is_inference:
