@@ -214,15 +214,55 @@ class ImprovedTradingModel:
             len(available_sentiment),
         )
 
+        # ------------------------------------------------------------------ #
+        # NaN Handling: Fill instead of drop to preserve data
+        # ------------------------------------------------------------------ #
+
+        # 1. Forward-fill technical indicators per symbol (handles warmup period)
+        #    This fills NaN values with the first valid value for each symbol
+        for col in available_technical:
+            if col in df.columns:
+                df[col] = df.groupby("symbol")[col].ffill()
+                # Also backfill any remaining NaNs at the start
+                df[col] = df.groupby("symbol")[col].bfill()
+
+        # 2. Fill lag features with 0 (neutral: no sentiment, no volume, no return)
+        for col in lag_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna(0.0)
+
+        # 3. Fill sentiment features with 0 (neutral)
+        for col in available_sentiment:
+            if col in df.columns:
+                df[col] = df[col].fillna(0.0)
+
+        # 4. Fill hourly_return NaN with 0 (no price change)
+        if "hourly_return" in df.columns:
+            df["hourly_return"] = df["hourly_return"].fillna(0.0)
+
+        rows_before = len(df)
+
         if not is_inference:
             # BINARY target: >0.5% next-hour return = 1, else 0
             df["target_return"] = df.groupby("symbol")[
                 "hourly_return"
             ].shift(-1)
             df["target"] = (df["target_return"] > 0.005).astype(int)
-            df = df.dropna(subset=self.features + ["target_return", "target"])
+
+            # Only drop rows missing the target (last row per symbol)
+            # Keep rows with filled features
+            df = df.dropna(subset=["target_return", "target", "close"])
         else:
-            df = df.dropna(subset=self.features)
+            # For inference, only require close price
+            df = df.dropna(subset=["close"])
+
+        rows_after = len(df)
+        logger.info(
+            "NaN handling: %d rows before, %d rows after (kept %.1f%%)",
+            rows_before,
+            rows_after,
+            100 * rows_after / rows_before if rows_before > 0 else 0,
+        )
 
         return df
 
@@ -234,6 +274,7 @@ class ImprovedTradingModel:
         self,
         df: pd.DataFrame,
         validate: bool = True,
+        validation_symbol: str = "BTCUSDT",
     ) -> Dict:
         """
         Train the ensemble model.
@@ -241,6 +282,9 @@ class ImprovedTradingModel:
         Args:
             df: Output of ``prepare_features(is_inference=False)``.
             validate: If True, run walk-forward validation first.
+            validation_symbol: Symbol to use for walk-forward validation.
+                Using a single symbol ensures one row per timestamp,
+                preventing data leakage and excessive fold counts.
 
         Returns:
             Dictionary with training results including status, sample
@@ -260,20 +304,48 @@ class ImprovedTradingModel:
             (y == 1).sum(),
         )
 
-        # Walk-forward validation
+        # Walk-forward validation on a SINGLE symbol to prevent data leakage
+        # When multiple symbols exist, rows from the same timestamp could be
+        # split between train/test sets, leaking information. Using one symbol
+        # ensures strictly temporal ordering with one row per timestamp.
         if validate:
-            logger.info("Running walk-forward validation...")
-            self.validation_results = self.validator.validate(
-                self.ensemble,
-                df[self.features + ["target"]],
-                self.features,
-            )
-            logger.info(
-                "Validation: precision=%.3f, recall=%.3f, f1=%.3f",
-                self.validation_results["overall"]["precision"],
-                self.validation_results["overall"]["recall"],
-                self.validation_results["overall"]["f1"],
-            )
+            # Filter to validation symbol and sort by timestamp
+            val_df = df[df["symbol"] == validation_symbol].copy()
+            val_df = val_df.sort_values("timestamp").reset_index(drop=True)
+
+            if len(val_df) < self.validator.min_train_size + self.validator.test_size:
+                logger.warning(
+                    "Insufficient data for validation on %s (%d rows, need %d). "
+                    "Skipping validation.",
+                    validation_symbol,
+                    len(val_df),
+                    self.validator.min_train_size + self.validator.test_size,
+                )
+                self.validation_results = None
+            else:
+                n_folds_expected = (
+                    len(val_df)
+                    - self.validator.min_train_size
+                    - self.validator.test_size
+                ) // self.validator.step_size + 1
+                logger.info(
+                    "Running walk-forward validation on %s (%d rows, ~%d folds)...",
+                    validation_symbol,
+                    len(val_df),
+                    n_folds_expected,
+                )
+                self.validation_results = self.validator.validate(
+                    self.ensemble,
+                    val_df[self.features + ["target"]],
+                    self.features,
+                )
+                logger.info(
+                    "Validation: precision=%.3f, recall=%.3f, f1=%.3f (n_folds=%d)",
+                    self.validation_results["overall"]["precision"],
+                    self.validation_results["overall"]["recall"],
+                    self.validation_results["overall"]["f1"],
+                    self.validation_results["overall"]["n_folds"],
+                )
 
         # Final fit on all data
         self.ensemble.fit(X, y, feature_names=self.features)
@@ -285,7 +357,9 @@ class ImprovedTradingModel:
             "n_samples": len(X),
             "n_features": len(self.features),
             "validation": (
-                self.validation_results["overall"] if validate else None
+                self.validation_results["overall"]
+                if self.validation_results is not None
+                else None
             ),
             "top_features": self.feature_importances.head(10).to_dict(),
         }

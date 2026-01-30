@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).parent / 'src'))
 from src.utils.config import TradingConfig
 from src.data.reddit_client import RedditClient
 from src.data.market_client import MarketClient
+from src.data.archive import append_to_archive
 from src.features.sentiment_advanced import EnhancedSentimentAnalyzer
 from src.models.trading_model import ImprovedTradingModel
 from src.execution.live import BinanceExecutor
@@ -131,15 +132,21 @@ def main():
     # B. Fetch Recent History (Fill gaps)
     logger.info("Fetching recent Reddit history...")
     hist_reddit = reddit_client.fetch_historical(days=30)
-    
+
+    # Archive historical data (append-only, never deleted)
+    if not hist_reddit.empty:
+        append_to_archive(hist_reddit)
+
     # C. Merge
     if not master_reddit.empty:
         # Combine old + new
         master_reddit = pd.concat([master_reddit, hist_reddit]).drop_duplicates(subset=['id'])
+        # Ensure all existing data is in archive
+        append_to_archive(master_reddit)
     else:
         master_reddit = hist_reddit
-        
-    # D. Save merged version immediately
+
+    # D. Save merged version immediately (rolling window for live trading)
     master_reddit.to_csv(data_path, index=False)
     logger.info(f"Total Database Size: {len(master_reddit)} posts")
 
@@ -190,8 +197,11 @@ def main():
             # A. Fetch Live Data
             live_reddit = reddit_client.fetch_live(limit=500)
             if not live_reddit.empty:
+                # Archive BEFORE applying rolling window (preserves all historical data)
+                append_to_archive(live_reddit)
+
                 master_reddit = pd.concat([master_reddit, live_reddit]).drop_duplicates(subset=['id'])
-                # Keep last 30 days rolling
+                # Keep last 30 days rolling for live trading efficiency
                 cutoff = datetime.now(timezone.utc) - timedelta(days=30)
                 master_reddit = master_reddit[master_reddit['created_utc'] > cutoff]
 

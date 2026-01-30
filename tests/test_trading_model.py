@@ -425,5 +425,127 @@ class TestGetModelSummary:
         assert summary["top_features"] is not None
 
 
+# ═══════════════════════ Single-symbol validation ═══════════════════════
+
+
+class TestSingleSymbolValidation:
+    """Tests verifying validation uses single symbol to prevent data leakage."""
+
+    @pytest.fixture
+    def multi_symbol_market_df(self):
+        """Create multi-symbol market data to test validation behavior."""
+        dfs = []
+        for symbol in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
+            # Use 200 hours (smaller for faster tests)
+            df = _make_market_df(n_hours=200, symbol=symbol, seed=42)
+            dfs.append(df)
+        return pd.concat(dfs, ignore_index=True)
+
+    @pytest.fixture
+    def multi_symbol_sentiment_df(self):
+        """Create matching multi-symbol sentiment data."""
+        dfs = []
+        for symbol in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
+            df = _make_sentiment_df(n_hours=200, symbol=symbol, seed=42)
+            dfs.append(df)
+        return pd.concat(dfs, ignore_index=True)
+
+    def test_validation_uses_single_symbol(
+        self, multi_symbol_market_df, multi_symbol_sentiment_df
+    ):
+        """Validation should use only the specified symbol, not all rows."""
+        model = ImprovedTradingModel()
+        # Use smaller windows for faster test
+        model.validator.min_train_size = 100
+        model.validator.test_size = 50
+        model.validator.step_size = 50
+
+        df = model.prepare_features(
+            multi_symbol_market_df, multi_symbol_sentiment_df, is_inference=False
+        )
+
+        # Count rows per symbol
+        btc_rows = len(df[df["symbol"] == "BTCUSDT"])
+        total_rows = len(df)
+
+        # Train with validation
+        result = model.train(df, validate=True, validation_symbol="BTCUSDT")
+
+        # Validation should have been performed
+        assert result["validation"] is not None
+
+        # The number of folds should be based on single-symbol rows, not total
+        # With 3 symbols, if we used all rows, we'd have ~3x more folds
+        n_folds = model.validation_results["overall"]["n_folds"]
+        expected_max_folds = (btc_rows - 100 - 50) // 50 + 1
+
+        # Folds should be close to single-symbol expectation, not 3x higher
+        assert n_folds <= expected_max_folds + 1, (
+            f"Too many folds ({n_folds}), expected ~{expected_max_folds}. "
+            f"Validation may be using all {total_rows} rows instead of "
+            f"single-symbol {btc_rows} rows."
+        )
+
+    def test_validation_respects_temporal_order(
+        self, multi_symbol_market_df, multi_symbol_sentiment_df
+    ):
+        """Validation folds should maintain strict temporal ordering."""
+        model = ImprovedTradingModel()
+        model.validator.min_train_size = 100
+        model.validator.test_size = 50
+        model.validator.step_size = 50
+
+        df = model.prepare_features(
+            multi_symbol_market_df, multi_symbol_sentiment_df, is_inference=False
+        )
+        model.train(df, validate=True, validation_symbol="BTCUSDT")
+
+        # Check each fold maintains train_end < test_start
+        for fold in model.validation_results["per_fold"]:
+            assert fold["train_end_idx"] < fold["test_start_idx"], (
+                f"Fold {fold['fold']}: train ends at {fold['train_end_idx']} "
+                f"but test starts at {fold['test_start_idx']} - temporal leak!"
+            )
+
+    def test_training_uses_all_symbols(
+        self, multi_symbol_market_df, multi_symbol_sentiment_df
+    ):
+        """Final model training should use all symbols, not just validation symbol."""
+        model = ImprovedTradingModel()
+        model.validator.min_train_size = 100
+        model.validator.test_size = 50
+        model.validator.step_size = 50
+
+        df = model.prepare_features(
+            multi_symbol_market_df, multi_symbol_sentiment_df, is_inference=False
+        )
+        result = model.train(df, validate=True, validation_symbol="BTCUSDT")
+
+        # n_samples should reflect ALL symbols, not just BTCUSDT
+        total_rows = len(df)
+        btc_rows = len(df[df["symbol"] == "BTCUSDT"])
+
+        assert result["n_samples"] == total_rows, (
+            f"Training used {result['n_samples']} samples but should use "
+            f"all {total_rows} (not just {btc_rows} from BTCUSDT)"
+        )
+
+    def test_fallback_when_validation_symbol_missing(self, market_df, sentiment_df):
+        """Should skip validation gracefully if validation symbol not in data."""
+        model = ImprovedTradingModel()
+        model.validator.min_train_size = 50
+        model.validator.test_size = 20
+        model.validator.step_size = 20
+
+        df = model.prepare_features(market_df, sentiment_df, is_inference=False)
+
+        # Use a symbol that doesn't exist in the data
+        result = model.train(df, validate=True, validation_symbol="DOGUSDT")
+
+        # Should still train successfully, just without validation
+        assert result["status"] == "success"
+        assert result["validation"] is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
