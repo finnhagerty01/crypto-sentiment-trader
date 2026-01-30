@@ -206,11 +206,19 @@ class BacktestEngine:
             # 3. Generate signals using the provided function
             signals = signal_generator(data, i)
 
-            # 4. Execute trades based on signals
-            for symbol, signal in signals.items():
-                self._process_signal(symbol, signal, current_data)
+            # 4. Get next bar data for realistic execution (avoid look-ahead bias)
+            # Signals generated at bar i are executed at the OPEN of bar i+1
+            if i + 1 < len(timestamps):
+                next_ts = timestamps[i + 1]
+                next_data = data[data["timestamp"] == next_ts]
+            else:
+                next_data = None  # End of data, cannot execute new trades
 
-            # 5. Record equity curve data point
+            # 5. Execute trades based on signals (using next bar's open price)
+            for symbol, signal in signals.items():
+                self._process_signal(symbol, signal, current_data, next_data)
+
+            # 6. Record equity curve data point
             self._record_equity(current_data)
 
         # Close all remaining positions at the end
@@ -278,6 +286,7 @@ class BacktestEngine:
         symbol: str,
         signal: Union[str, Dict],
         current_data: pd.DataFrame,
+        next_data: Optional[pd.DataFrame] = None,
     ) -> None:
         """
         Process a trading signal and execute if appropriate.
@@ -286,16 +295,19 @@ class BacktestEngine:
         - String: 'BUY', 'SELL', 'HOLD'
         - Dict: {'action': 'BUY', 'confidence': 0.72, ...}
 
+        To avoid look-ahead bias, trades are executed at the OPEN price of the
+        next bar, not the close of the current bar.
+
         Args:
             symbol: Trading symbol
             signal: Signal string or dict with action and optional confidence
-            current_data: DataFrame with current bar data
+            current_data: DataFrame with current bar data (for signal validation)
+            next_data: DataFrame with next bar data (for realistic execution price)
         """
+        # Validate that symbol exists in current data
         symbol_data = current_data[current_data["symbol"] == symbol]
         if symbol_data.empty:
             return
-
-        price = symbol_data["close"].iloc[0]
 
         # Parse signal - support both string and dict formats
         if isinstance(signal, dict):
@@ -309,19 +321,42 @@ class BacktestEngine:
         if confidence < self.config.min_confidence:
             return
 
+        # For new position entries, we need next bar data to get execution price
+        # If no next bar exists (end of data), we cannot execute new trades
+        if next_data is not None:
+            next_symbol_data = next_data[next_data["symbol"] == symbol]
+            if not next_symbol_data.empty:
+                execution_price = next_symbol_data["open"].iloc[0]
+            else:
+                # Symbol not available in next bar, cannot execute
+                execution_price = None
+        else:
+            execution_price = None
+
+        # For closing existing positions, use next bar's open if available,
+        # otherwise fall back to current bar's close (e.g., end of backtest)
+        if execution_price is None:
+            close_price = symbol_data["close"].iloc[0]
+        else:
+            close_price = execution_price
+
         if action == "BUY":
             # BUY signal: close short position (exit short) or open long position
             if symbol in self.positions and self.positions[symbol]["side"] == "short":
-                self._close_position(symbol, price, "signal")  # Exit short
+                self._close_position(symbol, close_price, "signal")  # Exit short
             elif symbol not in self.positions:
-                self._open_position(symbol, price, "long", confidence)  # Enter long
+                # Cannot open new position without next bar data
+                if execution_price is not None:
+                    self._open_position(symbol, execution_price, "long", confidence)
 
         elif action == "SELL":
             # SELL signal: close long position (exit long) or open short position
             if symbol in self.positions and self.positions[symbol]["side"] == "long":
-                self._close_position(symbol, price, "signal")  # Exit long
+                self._close_position(symbol, close_price, "signal")  # Exit long
             elif symbol not in self.positions and self.config.enable_shorting:
-                self._open_position(symbol, price, "short", confidence)  # Enter short
+                # Cannot open new position without next bar data
+                if execution_price is not None:
+                    self._open_position(symbol, execution_price, "short", confidence)
 
     def _open_position(
         self,

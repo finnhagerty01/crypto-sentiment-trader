@@ -285,9 +285,21 @@ class TestBacktestEngine:
         assert results["status"] == "success"
         assert results["metrics"]["n_trades"] == 2
 
-    def test_run_with_buy_sell_signals(self, default_config, sample_market_data):
+    def test_run_with_buy_sell_signals(self, sample_market_data):
         """Test backtest with buy and sell signals."""
-        engine = BacktestEngine(default_config)
+        # Use wide stop-loss to ensure signal-based exit is tested
+        # (not triggered by random price noise in test data)
+        config = BacktestConfig(
+            initial_capital=10000,
+            fee_rate=0.001,
+            slippage_rate=0.0005,
+            max_positions=5,
+            max_position_pct=0.15,
+            max_exposure=0.50,
+            stop_loss_pct=0.50,  # 50% stop-loss won't trigger in test
+            take_profit_pct=0.50,  # 50% take-profit won't trigger in test
+        )
+        engine = BacktestEngine(config)
 
         def alternating_signals(data, idx):
             timestamps = data["timestamp"].unique()

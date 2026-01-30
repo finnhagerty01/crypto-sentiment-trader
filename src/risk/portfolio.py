@@ -6,7 +6,7 @@ Provides comprehensive portfolio controls:
 - Total exposure limits
 - Single position size limits
 - Sector concentration limits
-- Correlation-based exposure limits
+- Correlation-based exposure limits (with dynamic correlation tracking)
 - Trade history tracking
 """
 
@@ -14,9 +14,17 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Default correlation when insufficient data is available
+# Conservative assumption: most alts are highly correlated with BTC during crashes
+DEFAULT_CORRELATION_FALLBACK = 0.9
+
+# Minimum data points required to calculate correlation
+MIN_CORRELATION_SAMPLES = 30
 
 
 @dataclass
@@ -127,7 +135,9 @@ class PortfolioRiskManager:
         max_sector_exposure: float = 0.30,
         fee_per_side: float = 0.001,
         slippage_per_side: float = 0.0005,
-        sectors: Optional[Dict[str, str]] = None
+        sectors: Optional[Dict[str, str]] = None,
+        price_history: Optional[pd.DataFrame] = None,
+        correlation_lookback_days: int = 30,
     ):
         """
         Initialize the portfolio risk manager.
@@ -142,6 +152,9 @@ class PortfolioRiskManager:
             fee_per_side: Trading fee per side as decimal (default 0.1%)
             slippage_per_side: Slippage per side as decimal (default 0.05%)
             sectors: Custom sector mappings (uses defaults if not provided)
+            price_history: Historical price DataFrame with columns [timestamp, symbol, close]
+                          Used for dynamic correlation calculation
+            correlation_lookback_days: Days of history to use for correlation (default 30)
         """
         self.initial_capital = initial_capital
         self.max_positions = max_positions
@@ -151,6 +164,7 @@ class PortfolioRiskManager:
         self.max_sector_exposure = max_sector_exposure
         self.fee_per_side = fee_per_side
         self.slippage_per_side = slippage_per_side
+        self.correlation_lookback_days = correlation_lookback_days
 
         self.sectors = sectors if sectors is not None else self.DEFAULT_SECTORS.copy()
 
@@ -165,6 +179,14 @@ class PortfolioRiskManager:
 
         # Track total fees paid
         self.total_fees_paid: float = 0.0
+
+        # Price history for dynamic correlation calculation
+        self._price_history: Optional[pd.DataFrame] = None
+        self._correlation_cache: Dict[str, float] = {}
+        self._correlation_cache_time: Optional[pd.Timestamp] = None
+
+        if price_history is not None:
+            self.update_price_history(price_history)
 
     def can_open_position(
         self,
@@ -217,10 +239,16 @@ class PortfolioRiskManager:
 
         # 6. Check correlated exposure (if not BTC itself)
         if symbol != 'BTCUSDT':
-            correlated_exposure = self._get_btc_correlated_exposure(size_usd)
+            correlated_exposure = self._get_btc_correlated_exposure(
+                size_usd, new_symbol=symbol
+            )
             correlated_pct = correlated_exposure / total_value if total_value > 0 else 0
             if correlated_pct > self.max_correlated_exposure:
-                return False, f"Would exceed BTC-correlated limit ({correlated_pct:.1%} > {self.max_correlated_exposure:.1%})"
+                correlation = self.get_btc_correlation(symbol)
+                return False, (
+                    f"Would exceed BTC-correlated limit ({correlated_pct:.1%} > "
+                    f"{self.max_correlated_exposure:.1%}), {symbol} correlation={correlation:.2f}"
+                )
 
         return True, "OK"
 
@@ -238,26 +266,206 @@ class PortfolioRiskManager:
                 exposure += position.value
         return exposure
 
-    def _get_btc_correlated_exposure(self, new_size: float) -> float:
+    def update_price_history(self, price_history: pd.DataFrame) -> None:
         """
-        Get exposure to BTC-correlated assets.
+        Update the price history used for correlation calculations.
 
-        Most alts have high correlation with BTC, so we track
-        aggregate exposure to avoid concentration risk.
+        Args:
+            price_history: DataFrame with columns [timestamp, symbol, close]
         """
-        # Direct BTC exposure
+        required_cols = {'timestamp', 'symbol', 'close'}
+        if not required_cols.issubset(price_history.columns):
+            logger.warning(
+                f"Price history missing columns: {required_cols - set(price_history.columns)}"
+            )
+            return
+
+        self._price_history = price_history.copy()
+        # Invalidate correlation cache when price history is updated
+        self._correlation_cache = {}
+        self._correlation_cache_time = None
+        logger.debug(f"Updated price history with {len(price_history)} rows")
+
+    def calculate_correlations(
+        self,
+        lookback_days: Optional[int] = None,
+        reference_time: Optional[pd.Timestamp] = None,
+    ) -> Dict[str, float]:
+        """
+        Calculate rolling correlations of all assets against BTC.
+
+        Uses daily returns over the lookback period to compute Pearson correlation.
+        Correlations tend to increase during market stress (converge to 1.0 in crashes),
+        so using rolling correlations provides more realistic risk estimates.
+
+        Args:
+            lookback_days: Days of history to use (default: self.correlation_lookback_days)
+            reference_time: Reference timestamp for the lookback window (default: latest)
+
+        Returns:
+            Dictionary mapping symbol -> correlation with BTC
+            Returns DEFAULT_CORRELATION_FALLBACK (0.9) for assets with insufficient data.
+        """
+        if self._price_history is None or self._price_history.empty:
+            logger.warning("No price history available for correlation calculation")
+            return {}
+
+        lookback = lookback_days or self.correlation_lookback_days
+
+        # Determine reference time
+        if reference_time is None:
+            reference_time = self._price_history['timestamp'].max()
+
+        # Check cache validity (cache for 1 hour)
+        if (
+            self._correlation_cache
+            and self._correlation_cache_time is not None
+            and (reference_time - self._correlation_cache_time).total_seconds() < 3600
+        ):
+            return self._correlation_cache.copy()
+
+        # Filter to lookback window
+        cutoff = reference_time - pd.Timedelta(days=lookback)
+        history = self._price_history[
+            (self._price_history['timestamp'] >= cutoff)
+            & (self._price_history['timestamp'] <= reference_time)
+        ]
+
+        if history.empty:
+            logger.warning(f"No price history in lookback window ({lookback} days)")
+            return {}
+
+        # Pivot to get symbol columns with close prices
+        try:
+            pivot = history.pivot_table(
+                index='timestamp',
+                columns='symbol',
+                values='close',
+                aggfunc='last'
+            )
+        except Exception as e:
+            logger.warning(f"Failed to pivot price history: {e}")
+            return {}
+
+        # Need BTC as reference
+        if 'BTCUSDT' not in pivot.columns:
+            logger.warning("BTCUSDT not in price history, cannot calculate correlations")
+            return {}
+
+        # Calculate daily returns
+        returns = pivot.pct_change().dropna()
+
+        if len(returns) < MIN_CORRELATION_SAMPLES:
+            logger.warning(
+                f"Insufficient data for correlations: {len(returns)} samples "
+                f"(need {MIN_CORRELATION_SAMPLES})"
+            )
+            return {}
+
+        # Calculate correlations against BTC
+        btc_returns = returns['BTCUSDT']
+        correlations = {}
+
+        for symbol in returns.columns:
+            if symbol == 'BTCUSDT':
+                correlations[symbol] = 1.0  # BTC is perfectly correlated with itself
+            else:
+                symbol_returns = returns[symbol]
+                # Drop NaN pairs
+                valid_mask = ~(btc_returns.isna() | symbol_returns.isna())
+                if valid_mask.sum() >= MIN_CORRELATION_SAMPLES:
+                    corr = btc_returns[valid_mask].corr(symbol_returns[valid_mask])
+                    correlations[symbol] = corr if not np.isnan(corr) else DEFAULT_CORRELATION_FALLBACK
+                else:
+                    # Insufficient data for this symbol, use conservative fallback
+                    correlations[symbol] = DEFAULT_CORRELATION_FALLBACK
+                    logger.debug(
+                        f"Insufficient data for {symbol} correlation, using fallback {DEFAULT_CORRELATION_FALLBACK}"
+                    )
+
+        # Cache results
+        self._correlation_cache = correlations
+        self._correlation_cache_time = reference_time
+
+        logger.debug(f"Calculated correlations for {len(correlations)} symbols")
+        return correlations
+
+    def get_btc_correlation(
+        self,
+        symbol: str,
+        reference_time: Optional[pd.Timestamp] = None,
+    ) -> float:
+        """
+        Get the correlation of a symbol with BTC.
+
+        Uses cached rolling correlation if available, otherwise calculates fresh.
+        Returns conservative fallback (0.9) if insufficient data.
+
+        Args:
+            symbol: Trading symbol
+            reference_time: Reference timestamp for correlation calculation
+
+        Returns:
+            Correlation coefficient with BTC (0 to 1)
+        """
+        if symbol == 'BTCUSDT':
+            return 1.0
+
+        correlations = self.calculate_correlations(reference_time=reference_time)
+
+        if symbol in correlations:
+            return correlations[symbol]
+
+        # Symbol not in price history, use conservative fallback
+        logger.debug(
+            f"No correlation data for {symbol}, using conservative fallback {DEFAULT_CORRELATION_FALLBACK}"
+        )
+        return DEFAULT_CORRELATION_FALLBACK
+
+    def _get_btc_correlated_exposure(
+        self,
+        new_size: float,
+        new_symbol: Optional[str] = None,
+        reference_time: Optional[pd.Timestamp] = None,
+    ) -> float:
+        """
+        Get exposure to BTC-correlated assets using dynamic correlations.
+
+        Uses rolling correlations to weight exposure by actual correlation
+        rather than a fixed assumption. This provides more accurate risk
+        estimates, especially during periods of high/low market correlation.
+
+        During market stress, correlations tend to converge to 1.0 (contagion),
+        so using dynamic correlations captures this risk amplification.
+
+        Args:
+            new_size: Size of proposed new position in USD
+            new_symbol: Symbol of proposed new position (for correlation lookup)
+            reference_time: Reference time for correlation calculation
+
+        Returns:
+            Total BTC-correlated exposure in USD
+        """
+        # Direct BTC exposure (correlation = 1.0)
         btc_exposure = 0.0
         if 'BTCUSDT' in self.state.positions:
             btc_exposure = self.state.positions['BTCUSDT'].value
 
-        # Other crypto (assume ~0.7 correlation with BTC)
+        # Other crypto weighted by their correlation with BTC
         correlated_exposure = btc_exposure
         for symbol, position in self.state.positions.items():
             if symbol != 'BTCUSDT':
-                correlated_exposure += position.value * 0.7
+                correlation = self.get_btc_correlation(symbol, reference_time)
+                correlated_exposure += position.value * correlation
 
-        # Add new position (assume correlated)
-        correlated_exposure += new_size * 0.7
+        # Add new position weighted by its correlation
+        if new_symbol:
+            new_correlation = self.get_btc_correlation(new_symbol, reference_time)
+        else:
+            # Unknown symbol, use conservative fallback
+            new_correlation = DEFAULT_CORRELATION_FALLBACK
+
+        correlated_exposure += new_size * new_correlation
 
         return correlated_exposure
 

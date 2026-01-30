@@ -1,3 +1,4 @@
+import argparse
 import time
 import logging
 import sys
@@ -9,10 +10,47 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(str(Path(__file__).parent / 'src'))
 
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Crypto Sentiment Trading Bot",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py                    # Run in continuous loop mode (default)
+  python main.py --run-once         # Run one iteration and exit (for cron/systemd)
+  python main.py --dry-run          # Simulate trades without real money
+  python main.py --run-once --dry-run  # Single iteration, no real trades
+        """,
+    )
+    parser.add_argument(
+        "--run-once",
+        action="store_true",
+        help="Run one trading cycle and exit (scheduler-friendly mode for cron/systemd)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Simulate trades without executing real orders (default: True)",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Execute real trades (disables dry-run mode)",
+    )
+    return parser.parse_args()
+
 from src.utils.config import TradingConfig
 from src.data.reddit_client import RedditClient
 from src.data.market_client import MarketClient
-from src.data.archive import append_to_archive, load_archive
+from src.data.archive import (
+    append_to_archive,
+    load_archive,
+    migrate_from_csv,
+    init_database,
+)
 from src.features.sentiment_advanced import EnhancedSentimentAnalyzer
 from src.models.trading_model import ImprovedTradingModel
 from src.execution.live import BinanceExecutor
@@ -33,9 +71,8 @@ logging.basicConfig(
 logger = logging.getLogger("MainOrchestrator")
 
 # --- CONFIGURATION ---
-DRY_RUN = True  # <--- SAFETY ON: NO REAL MONEY
 LOOP_INTERVAL = 3600
-STARTING_CAPITAL = 1000.0 
+STARTING_CAPITAL = 1000.0
 
 # --- RISK CONFIGURATION ---
 RISK_CONFIG = {
@@ -53,8 +90,19 @@ RISK_CONFIG = {
 }
 
 
-def main():
-    logger.info(f"Starting Sleek Bot... DRY_RUN={DRY_RUN}")
+def main(run_once: bool = False, dry_run: bool = True):
+    """
+    Main trading bot entry point.
+
+    Args:
+        run_once: If True, run one trading cycle and exit (for cron/systemd).
+        dry_run: If True, simulate trades without real execution.
+    """
+    logger.info(f"Starting Sleek Bot... dry_run={dry_run}, RUN_ONCE={run_once}")
+
+    # Initialize SQLite archive and migrate from CSV if needed
+    init_database()
+    migrate_from_csv()
 
     config = TradingConfig.from_yaml("configs/data.yaml")
     reddit_client = RedditClient(subreddits=config.subreddits)
@@ -178,9 +226,12 @@ def main():
     RETRAIN_HOURS = 24
 
     # --- 3. LIVE LOOP ---
+    # Use run_once mode for scheduler-friendly operation (cron/systemd)
+    iteration_count = 0
     while True:
         try:
-            logger.info("--- STARTING LIVE CYCLE ---")
+            iteration_count += 1
+            logger.info(f"--- STARTING LIVE CYCLE (iteration {iteration_count}) ---")
             current_time = datetime.now(timezone.utc)
 
             # Daily Reset
@@ -192,6 +243,9 @@ def main():
             # Check Risk Halt
             if not risk_budget.can_trade():
                 logger.warning(f"TRADING HALTED: {risk_budget.get_status()['halt_reasons']}")
+                if run_once:
+                    logger.info("Run-once mode: exiting after risk halt")
+                    break
                 time.sleep(LOOP_INTERVAL)
                 continue
 
@@ -247,7 +301,7 @@ def main():
                 if portfolio.has_position(symbol):
                     price = price_map.get(symbol)
                     # EXECUTE STOP
-                    if DRY_RUN:
+                    if dry_run:
                         trade = portfolio.close_position(symbol, price, reason=action, exit_time=pd.Timestamp(current_time))
                         if trade: risk_budget.record_trade(trade['pnl'])
                         stop_manager.remove_stop(symbol)
@@ -291,7 +345,7 @@ def main():
                     if pos_calc['size_usd'] > 0:
                         qty = pos_calc['quantity']
                         # EXECUTE BUY
-                        if DRY_RUN:
+                        if dry_run:
                             if portfolio.open_position(symbol, pos_calc['size_usd'], price, pd.Timestamp(current_time)):
                                 logger.info(f"[PAPER] BUY {symbol} ${pos_calc['size_usd']:.2f} @ {price}")
                                 if atr: stop_manager.create_atr_stop(symbol, price, qty, atr)
@@ -311,7 +365,7 @@ def main():
                     
                     if decision.can_exit:
                         # EXECUTE SELL
-                        if DRY_RUN:
+                        if dry_run:
                             trade = portfolio.close_position(symbol, price, reason=decision.reason.value, exit_time=pd.Timestamp(current_time))
                             if trade: 
                                 logger.info(f"[PAPER] SELL {symbol} PnL={trade['pnl']:.2f}")
@@ -327,23 +381,23 @@ def main():
             summary = portfolio.get_summary(price_map)
             logger.info(f"[STATUS] Equity=${summary['total_value']:.2f} | Positions={summary['n_positions']}")
 
-            # G. Retrain Cycle (ROLLING WINDOW ONLY)
-            if (datetime.now() - last_train_time).total_seconds() / 3600 >= RETRAIN_HOURS:
+            # G. Retrain Cycle (ROLLING WINDOW ONLY) - skip in run_once mode
+            if not run_once and (datetime.now() - last_train_time).total_seconds() / 3600 >= RETRAIN_HOURS:
                 logger.info("--- RETRAINING MODEL (ROLLING WINDOW) ---")
-                
+
                 # 1. Use ONLY master_reddit (the rolling window 30 days)
                 train_sentiment = sentiment_analyzer.analyze(master_reddit)
-                
+
                 # 2. Prepare features
                 # We reuse live_market which covers the last ~35 days
                 train_df = model.prepare_features(live_market, train_sentiment, is_inference=False)
-                
+
                 if not train_df.empty:
                     # 3. Train WITHOUT tuning or feature selection
                     # This keeps the hyperparameters and feature set from the Archive Tuning
                     # but updates the weights for the current market regime.
                     model.train(
-                        train_df, 
+                        train_df,
                         tune=False,              # <--- Keep params from archive
                         feature_selection=False  # <--- Keep feature set from archive
                     )
@@ -351,6 +405,11 @@ def main():
                     logger.info("Retraining complete.")
                 else:
                     logger.warning("Retrain failed: empty features.")
+
+            # H. Run-once mode: exit after one complete cycle
+            if run_once:
+                logger.info("Run-once mode: completed one trading cycle, exiting")
+                break
 
             logger.info(f"Sleeping {LOOP_INTERVAL}s...")
             time.sleep(LOOP_INTERVAL)
@@ -360,7 +419,14 @@ def main():
             break
         except Exception as e:
             logger.error(f"Loop Error: {e}", exc_info=True)
+            if run_once:
+                logger.error("Run-once mode: exiting after error")
+                raise
             time.sleep(60)
 
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    # --live flag disables dry-run
+    dry_run_mode = not args.live
+    main(run_once=args.run_once, dry_run=dry_run_mode)

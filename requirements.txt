@@ -16,3 +16,5 @@ streamlit
 plotly
 seaborn
 optuna
+torch
+transformers
