@@ -547,5 +547,158 @@ class TestSingleSymbolValidation:
         assert result["validation"] is None
 
 
+# ═══════════════════════ Threshold alignment ═══════════════════════
+
+
+class TestThresholdAlignment:
+    """Tests for threshold validation and alignment."""
+
+    def test_default_thresholds_aligned(self):
+        """Default min_confidence should not exceed enter_threshold."""
+        model = ImprovedTradingModel()
+        assert model.min_confidence <= model.enter_threshold, (
+            f"Default min_confidence ({model.min_confidence}) > "
+            f"enter_threshold ({model.enter_threshold}) causes BUY->HOLD conversion"
+        )
+
+    def test_default_exit_threshold_aligned(self):
+        """Default min_confidence should not exceed 1 - exit_threshold."""
+        model = ImprovedTradingModel()
+        assert model.min_confidence <= (1 - model.exit_threshold), (
+            f"Default min_confidence ({model.min_confidence}) > "
+            f"1 - exit_threshold ({1 - model.exit_threshold}) causes SELL->HOLD conversion"
+        )
+
+    def test_misaligned_enter_threshold_logs_warning(self, caplog):
+        """Creating model with min_confidence > enter_threshold should warn."""
+        import logging
+        with caplog.at_level(logging.WARNING):
+            ImprovedTradingModel(
+                enter_threshold=0.55,
+                min_confidence=0.60,  # Higher than enter_threshold
+            )
+        assert "min_confidence" in caplog.text
+        assert "enter_threshold" in caplog.text
+
+    def test_aligned_thresholds_no_warning(self, caplog):
+        """Aligned thresholds should not produce warnings."""
+        import logging
+        with caplog.at_level(logging.WARNING):
+            ImprovedTradingModel(
+                enter_threshold=0.55,
+                exit_threshold=0.45,
+                min_confidence=0.55,  # Equals enter_threshold
+            )
+        # Should not warn about threshold misalignment
+        assert "min_confidence" not in caplog.text or ">" not in caplog.text
+
+    def test_custom_target_threshold(self):
+        """Custom target_return_threshold should be stored."""
+        model = ImprovedTradingModel(target_return_threshold=0.002)
+        assert model.target_return_threshold == 0.002
+
+    def test_default_target_threshold(self):
+        """Default target_return_threshold should be 0.001 (0.1%)."""
+        model = ImprovedTradingModel()
+        assert model.target_return_threshold == 0.001
+
+
+class TestTargetThreshold:
+    """Tests for configurable target return threshold."""
+
+    def test_target_uses_custom_threshold(self, market_df, sentiment_df):
+        """Target calculation should use the configured threshold."""
+        # With very high threshold, almost nothing should be positive
+        model_high = ImprovedTradingModel(target_return_threshold=0.10)  # 10%
+        df_high = model_high.prepare_features(market_df, sentiment_df, is_inference=False)
+        pos_high = (df_high["target"] == 1).sum()
+
+        # With very low threshold, almost everything should be positive
+        model_low = ImprovedTradingModel(target_return_threshold=0.0001)  # 0.01%
+        df_low = model_low.prepare_features(market_df, sentiment_df, is_inference=False)
+        pos_low = (df_low["target"] == 1).sum()
+
+        # Low threshold should have more positives than high threshold
+        assert pos_low > pos_high, (
+            f"Expected more positives with lower threshold: "
+            f"low={pos_low}, high={pos_high}"
+        )
+
+    def test_target_threshold_in_summary(self, small_model, market_df, sentiment_df):
+        """Model summary should include target_return_threshold."""
+        df = small_model.prepare_features(market_df, sentiment_df)
+        small_model.train(df, validate=False)
+        summary = small_model.get_model_summary()
+        assert "target_return_threshold" in summary
+
+
+class TestProbabilityDiagnostics:
+    """Tests for the diagnose_probability_distribution method."""
+
+    def test_diagnostics_returns_dict(self, small_model, market_df, sentiment_df):
+        """Diagnostics should return a dictionary."""
+        df = small_model.prepare_features(market_df, sentiment_df)
+        small_model.train(df, validate=False)
+        pred_df = small_model.prepare_features(market_df, sentiment_df, is_inference=True)
+        result = small_model.diagnose_probability_distribution(pred_df)
+        assert isinstance(result, dict)
+        assert "error" not in result
+
+    def test_diagnostics_has_statistics(self, small_model, market_df, sentiment_df):
+        """Diagnostics should include probability statistics."""
+        df = small_model.prepare_features(market_df, sentiment_df)
+        small_model.train(df, validate=False)
+        pred_df = small_model.prepare_features(market_df, sentiment_df, is_inference=True)
+        result = small_model.diagnose_probability_distribution(pred_df)
+
+        assert "statistics" in result
+        stats = result["statistics"]
+        assert "mean" in stats
+        assert "std" in stats
+        assert "min" in stats
+        assert "max" in stats
+        assert "percentiles" in stats
+
+    def test_diagnostics_has_signal_counts(self, small_model, market_df, sentiment_df):
+        """Diagnostics should include signal counts at various thresholds."""
+        df = small_model.prepare_features(market_df, sentiment_df)
+        small_model.train(df, validate=False)
+        pred_df = small_model.prepare_features(market_df, sentiment_df, is_inference=True)
+        result = small_model.diagnose_probability_distribution(pred_df)
+
+        assert "signal_counts" in result
+        counts = result["signal_counts"]
+        assert len(counts) > 0
+        # Check structure of signal counts
+        for thresh, data in counts.items():
+            assert "buy_count" in data
+            assert "sell_count" in data
+
+    def test_diagnostics_has_recommendations(self, small_model, market_df, sentiment_df):
+        """Diagnostics should include recommendations."""
+        df = small_model.prepare_features(market_df, sentiment_df)
+        small_model.train(df, validate=False)
+        pred_df = small_model.prepare_features(market_df, sentiment_df, is_inference=True)
+        result = small_model.diagnose_probability_distribution(pred_df)
+
+        assert "recommendations" in result
+        rec = result["recommendations"]
+        assert "current_analysis" in rec
+        assert "note" in rec
+
+    def test_diagnostics_before_fit_returns_error(self, model):
+        """Diagnostics before fitting should return error."""
+        dummy = pd.DataFrame({"symbol": ["BTCUSDT"], "f1": [1.0]})
+        result = model.diagnose_probability_distribution(dummy)
+        assert "error" in result
+
+    def test_diagnostics_empty_df_returns_error(self, small_model, market_df, sentiment_df):
+        """Diagnostics on empty DataFrame should return error."""
+        df = small_model.prepare_features(market_df, sentiment_df)
+        small_model.train(df, validate=False)
+        result = small_model.diagnose_probability_distribution(pd.DataFrame())
+        assert "error" in result
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

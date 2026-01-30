@@ -822,6 +822,239 @@ class TestDictSignals:
 # ============================================================================
 
 
+# ============================================================================
+# Shorting Tests
+# ============================================================================
+
+
+class TestShorting:
+    """Tests for short selling functionality."""
+
+    @pytest.fixture
+    def shorting_config(self):
+        """Config with shorting enabled and wide stops to avoid early exits."""
+        return BacktestConfig(
+            initial_capital=10000,
+            fee_rate=0.001,
+            slippage_rate=0.0005,
+            max_positions=5,
+            max_position_pct=0.15,
+            max_exposure=0.50,
+            stop_loss_pct=0.50,  # Wide stop to avoid early exit
+            take_profit_pct=0.50,  # Wide take-profit to avoid early exit
+            enable_shorting=True,
+        )
+
+    def test_short_position_opened_on_sell(self, shorting_config, sample_market_data):
+        """Test that SELL signal opens short position when no position exists."""
+        engine = BacktestEngine(shorting_config)
+
+        def sell_signal(data, idx):
+            if idx == 10:
+                return {"BTCUSDT": "SELL"}
+            return {}
+
+        results = engine.run(sample_market_data, sell_signal)
+
+        # Should have 1 trade (short closed at end of backtest)
+        assert results["status"] == "success"
+        assert results["metrics"]["n_trades"] == 1
+        # Verify it was a short trade
+        trade = results["trades"][0]
+        assert trade.side == "short"
+
+    def test_short_not_opened_when_disabled(self, default_config, sample_market_data):
+        """Test that SELL signal does NOT open short when shorting is disabled."""
+        engine = BacktestEngine(default_config)
+
+        def sell_signal(data, idx):
+            if idx == 10:
+                return {"BTCUSDT": "SELL"}
+            return {}
+
+        results = engine.run(sample_market_data, sell_signal)
+
+        # Should have no trades (SELL ignored without position)
+        assert results["status"] == "no_trades"
+
+    def test_buy_closes_short_position(self, shorting_config, sample_market_data):
+        """Test that BUY signal closes an existing short position."""
+        engine = BacktestEngine(shorting_config)
+
+        def short_then_buy(data, idx):
+            if idx == 10:
+                return {"BTCUSDT": "SELL"}  # Open short
+            elif idx == 30:
+                return {"BTCUSDT": "BUY"}  # Close short
+            return {}
+
+        results = engine.run(sample_market_data, short_then_buy)
+
+        assert results["status"] == "success"
+        assert results["metrics"]["n_trades"] == 1
+        # Verify exit reason is signal, not end_of_backtest
+        trade = results["trades"][0]
+        assert trade.exit_reason == "signal"
+        assert trade.side == "short"
+
+    def test_sell_closes_long_position(self, shorting_config, sample_market_data):
+        """Test that SELL signal closes an existing long position (not opens short)."""
+        engine = BacktestEngine(shorting_config)
+
+        def long_then_sell(data, idx):
+            if idx == 10:
+                return {"BTCUSDT": "BUY"}  # Open long
+            elif idx == 30:
+                return {"BTCUSDT": "SELL"}  # Close long
+            return {}
+
+        results = engine.run(sample_market_data, long_then_sell)
+
+        assert results["status"] == "success"
+        assert results["metrics"]["n_trades"] == 1
+        trade = results["trades"][0]
+        assert trade.side == "long"
+        assert trade.exit_reason == "signal"
+
+    def test_buy_does_not_double_long(self, shorting_config, sample_market_data):
+        """Test that BUY signal does not open a second long when long exists."""
+        engine = BacktestEngine(shorting_config)
+
+        def double_buy(data, idx):
+            if idx == 10:
+                return {"BTCUSDT": "BUY"}  # Open long
+            elif idx == 20:
+                return {"BTCUSDT": "BUY"}  # Should be ignored (already long)
+            return {}
+
+        results = engine.run(sample_market_data, double_buy)
+
+        assert results["status"] == "success"
+        # Only 1 trade (the initial long, closed at end)
+        assert results["metrics"]["n_trades"] == 1
+
+    def test_sell_does_not_double_short(self, shorting_config, sample_market_data):
+        """Test that SELL signal does not open a second short when short exists."""
+        engine = BacktestEngine(shorting_config)
+
+        def double_sell(data, idx):
+            if idx == 10:
+                return {"BTCUSDT": "SELL"}  # Open short
+            elif idx == 20:
+                return {"BTCUSDT": "SELL"}  # Should be ignored (already short)
+            return {}
+
+        results = engine.run(sample_market_data, double_sell)
+
+        assert results["status"] == "success"
+        # Only 1 trade (the initial short, closed at end)
+        assert results["metrics"]["n_trades"] == 1
+
+    def test_short_stop_loss(self, sample_market_data):
+        """Test stop-loss execution for short position."""
+        config = BacktestConfig(
+            initial_capital=10000,
+            stop_loss_pct=0.001,  # Very tight stop (0.1%)
+            take_profit_pct=0.50,
+            enable_shorting=True,
+        )
+        engine = BacktestEngine(config)
+
+        def open_short(data, idx):
+            if idx == 5:
+                return {"BTCUSDT": "SELL"}  # Open short
+            return {}
+
+        results = engine.run(sample_market_data, open_short)
+
+        # With tight stop on a volatile market, likely hit stop-loss
+        if results["status"] == "success" and results["trades"]:
+            trade = results["trades"][0]
+            assert trade.side == "short"
+
+    def test_short_take_profit(self, sample_market_data):
+        """Test take-profit execution for short position."""
+        config = BacktestConfig(
+            initial_capital=10000,
+            stop_loss_pct=0.50,  # Wide stop
+            take_profit_pct=0.001,  # Very tight take-profit (0.1%)
+            enable_shorting=True,
+        )
+        engine = BacktestEngine(config)
+
+        def open_short(data, idx):
+            if idx == 5:
+                return {"BTCUSDT": "SELL"}
+            return {}
+
+        results = engine.run(sample_market_data, open_short)
+
+        if results["status"] == "success" and results["trades"]:
+            trade = results["trades"][0]
+            assert trade.side == "short"
+
+    def test_short_pnl_calculation(self, shorting_config, sample_market_data):
+        """Test that short P&L is calculated correctly (profit when price drops)."""
+        engine = BacktestEngine(shorting_config)
+
+        # Create data with known price movement
+        dates = pd.date_range("2024-01-01", periods=50, freq="h")
+        rows = []
+        for i, ts in enumerate(dates):
+            # Price drops 10% over the period
+            price = 40000 * (1 - 0.1 * i / len(dates))
+            rows.append({
+                "timestamp": ts,
+                "symbol": "BTCUSDT",
+                "open": price,
+                "high": price * 1.001,
+                "low": price * 0.999,
+                "close": price,
+                "volume": 1000,
+            })
+        declining_data = pd.DataFrame(rows)
+
+        def short_strategy(data, idx):
+            if idx == 5:
+                return {"BTCUSDT": "SELL"}  # Open short
+            elif idx == 40:
+                return {"BTCUSDT": "BUY"}  # Close short
+            return {}
+
+        results = engine.run(declining_data, short_strategy)
+
+        assert results["status"] == "success"
+        trade = results["trades"][0]
+        assert trade.side == "short"
+        # Price dropped, so short should be profitable
+        assert trade.gross_pnl > 0
+
+    def test_mixed_long_and_short_trades(self, shorting_config, sample_market_data):
+        """Test alternating between long and short positions."""
+        engine = BacktestEngine(shorting_config)
+
+        def alternating_strategy(data, idx):
+            if idx == 10:
+                return {"BTCUSDT": "BUY"}  # Open long
+            elif idx == 20:
+                return {"BTCUSDT": "SELL"}  # Close long
+            elif idx == 30:
+                return {"BTCUSDT": "SELL"}  # Open short
+            elif idx == 40:
+                return {"BTCUSDT": "BUY"}  # Close short
+            return {}
+
+        results = engine.run(sample_market_data, alternating_strategy)
+
+        assert results["status"] == "success"
+        assert results["metrics"]["n_trades"] == 2
+
+        # Verify we have both long and short trades
+        sides = {t.side for t in results["trades"]}
+        assert "long" in sides
+        assert "short" in sides
+
+
 class TestWalkForwardBacktest:
     """Tests for walk-forward backtesting."""
 

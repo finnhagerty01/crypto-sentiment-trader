@@ -30,11 +30,12 @@ intervals:
 
 # Trading parameters (THESE OVERWRITE CONFIG.PY)
 trading_params:
-  enter_threshold: 0.60   # Make sure this matches your desired logic
-  exit_threshold: 0.55
+  enter_threshold: 0.46   # Make sure this matches your desired logic
+  exit_threshold: 0.32
   min_hold_bars: 2        # This effectively implements your "Hold" logic
   fee_per_side: 0.00010
   slippage_per_side: 0.0005
+  min_confidence: 0.46
 
 # Data settings
 reddit_limit_per_sub: 500 # The YAML value (500) overrides the Python default (200)

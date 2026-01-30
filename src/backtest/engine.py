@@ -309,18 +309,19 @@ class BacktestEngine:
         if confidence < self.config.min_confidence:
             return
 
-        if action == "BUY" and symbol not in self.positions:
-            self._open_position(symbol, price, "long", confidence)
+        if action == "BUY":
+            # BUY signal: close short position (exit short) or open long position
+            if symbol in self.positions and self.positions[symbol]["side"] == "short":
+                self._close_position(symbol, price, "signal")  # Exit short
+            elif symbol not in self.positions:
+                self._open_position(symbol, price, "long", confidence)  # Enter long
 
-        elif action == "SELL" and symbol in self.positions:
-            self._close_position(symbol, price, "signal")
-
-        elif (
-            action == "SELL"
-            and symbol not in self.positions
-            and self.config.enable_shorting
-        ):
-            self._open_position(symbol, price, "short", confidence)
+        elif action == "SELL":
+            # SELL signal: close long position (exit long) or open short position
+            if symbol in self.positions and self.positions[symbol]["side"] == "long":
+                self._close_position(symbol, price, "signal")  # Exit long
+            elif symbol not in self.positions and self.config.enable_shorting:
+                self._open_position(symbol, price, "short", confidence)  # Enter short
 
     def _open_position(
         self,
@@ -475,9 +476,14 @@ class BacktestEngine:
         """
         for symbol in list(self.positions.keys()):
             symbol_data = current_data[current_data["symbol"] == symbol]
+            
             if not symbol_data.empty:
                 price = symbol_data["close"].iloc[0]
-                self._close_position(symbol, price, "end_of_backtest")
+            else:
+                # FALLBACK: Use the current_price tracked in the position (last known price)
+                price = self.positions[symbol]["current_price"]
+                
+            self._close_position(symbol, price, "end_of_backtest")
 
     def _get_total_value(self) -> float:
         """Get total portfolio value (cash + positions)."""

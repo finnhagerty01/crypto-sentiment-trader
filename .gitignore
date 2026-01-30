@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 .conda/
 .env
+reports/
 # notebooks
 .ipynb_checkpoints/
 # data
@@ -15,3 +16,7 @@ data/
 models/
 !src/models/
 logs/
+#Claude
+trade_bot.log
+.claude/
+archive/

@@ -44,6 +44,7 @@ class TradingConfig:
     min_hold_bars: int = 0
     fee_per_side: float = 0.00010
     slippage_per_side: float = 0.0005
+    min_confidence: float = 0.40
 
     # Paths
     data_dir: Path = Path("data")
