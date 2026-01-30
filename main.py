@@ -16,6 +16,12 @@ from src.features.sentiment_advanced import EnhancedSentimentAnalyzer
 from src.models.trading_model import ImprovedTradingModel
 from src.execution.live import BinanceExecutor
 
+# Risk Management
+from src.risk.position_sizing import PositionSizer, RiskBudget
+from src.risk.stop_loss import StopLossManager
+from src.risk.exit_manager import ExitManager, ExitReason
+from src.risk.portfolio import PortfolioRiskManager
+
 # Setup Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -27,121 +33,87 @@ logger = logging.getLogger("MainOrchestrator")
 
 # --- CONFIGURATION ---
 DRY_RUN = True  # <--- SAFETY ON: NO REAL MONEY
-LOOP_INTERVAL = 3600 
+LOOP_INTERVAL = 3600
 
 # PAPER TRADING STATE
+STARTING_CAPITAL = 1000.0  # Starting capital in USDT
 
-TRADE_NOTIONAL_USDT = 100.0  # consistent baseline sizing for paper trades
+# --- RISK MANAGEMENT CONFIGURATION ---
+RISK_CONFIG = {
+    # Position Sizing
+    'max_position_pct': 0.15,       # Max 15% of account per position
+    'max_total_exposure': 0.50,     # Max 50% of account exposed
+    'min_confidence': 0.55,         # Minimum confidence for any trade
 
-class PaperLedger:
-    def __init__(self, starting_usdt: float, fee_per_side: float, slippage_per_side: float):
-        self.usdt = float(starting_usdt)
-        self.fee_per_side = float(fee_per_side)
-        self.slippage_per_side = float(slippage_per_side)
-        # positions: symbol -> {"qty": float, "avg_entry": float, "entry_ts": datetime}
-        self.positions = {} 
-        # last_exit: symbol -> datetime (timestamp of last sell)
-        self.last_exit = {} 
-        self.realized_pnl = 0.0
-        self.fees_paid = 0.0
+    # Stop-Loss / Take-Profit
+    'default_stop_pct': 0.03,       # 3% stop-loss
+    'default_take_profit_pct': 0.06, # 6% take-profit (2:1 reward/risk)
+    'atr_multiplier': 2.0,          # ATR multiplier for volatility-based stops
 
-    def _apply_buy_price(self, mid_price: float) -> float:
-        return mid_price * (1.0 + self.slippage_per_side)
+    # Exit Management
+    'min_hold_hours': 2.0,          # Minimum hold before signal exit
+    'max_hold_hours': 48.0,         # Maximum hold time (forced exit)
 
-    def _apply_sell_price(self, mid_price: float) -> float:
-        return mid_price * (1.0 - self.slippage_per_side)
+    # Daily Risk Limits
+    'max_daily_loss': 0.05,         # Halt trading after 5% daily loss
+    'max_drawdown': 0.15,           # Halt trading after 15% drawdown
 
-    def buy(self, symbol: str, mid_price: float, notional_usdt: float, current_time: datetime) -> bool:
-        if notional_usdt <= 0: return False
+    # Cooldown
+    'cooldown_hours': 4,            # Wait after selling before re-buying
+}
 
-        fill_price = self._apply_buy_price(mid_price)
-        fee = notional_usdt * self.fee_per_side
-        total_cost = notional_usdt + fee
-
-        if self.usdt < total_cost: return False
-
-        qty = notional_usdt / fill_price
-
-        # Existing position logic
-        pos = self.positions.get(symbol, {"qty": 0.0, "avg_entry": 0.0, "entry_ts": current_time})
-        
-        # Weighted average entry price
-        old_qty = pos["qty"]
-        new_qty = old_qty + qty
-        if new_qty > 0:
-            new_avg = (old_qty * pos["avg_entry"] + qty * fill_price) / new_qty
-        else:
-            new_avg = 0.0
-
-        pos["qty"] = new_qty
-        pos["avg_entry"] = new_avg
-        # Only update entry_ts if this is a fresh position (qty was 0)
-        if old_qty == 0:
-            pos["entry_ts"] = current_time
-            
-        self.positions[symbol] = pos
-        self.usdt -= total_cost
-        self.fees_paid += fee
-        return True
-
-    def sell_all(self, symbol: str, mid_price: float, current_time: datetime) -> bool:
-        pos = self.positions.get(symbol, {"qty": 0.0, "avg_entry": 0.0})
-        qty = pos["qty"]
-        if qty <= 0: return False
-
-        fill_price = self._apply_sell_price(mid_price)
-        gross = qty * fill_price
-        fee = gross * self.fee_per_side
-        net = gross - fee
-
-        cost_basis = qty * pos["avg_entry"]
-        self.realized_pnl += (net - cost_basis)
-
-        self.usdt += net
-        self.fees_paid += fee
-        
-        # Record exit time for cooldown logic
-        self.last_exit[symbol] = current_time
-
-        # Clear position
-        self.positions[symbol] = {"qty": 0.0, "avg_entry": 0.0, "entry_ts": None}
-        return True
-    
-    # ... equity and snapshot methods remain the same ...
-    def equity(self, price_map: dict) -> float:
-        eq = self.usdt
-        for sym, pos in self.positions.items():
-            qty = pos.get("qty", 0.0)
-            if qty > 0 and sym in price_map:
-                eq += qty * price_map[sym]
-        return eq
-
-    def snapshot(self, price_map: dict) -> dict:
-        return {
-            "usdt": self.usdt,
-            "equity": self.equity(price_map),
-            "realized_pnl": self.realized_pnl,
-            "fees_paid": self.fees_paid,
-            "positions": {k: v for k, v in self.positions.items() if v.get("qty", 0.0) > 0}
-        }
 
 def main():
     logger.info(f"Starting Sleek Bot... DRY_RUN={DRY_RUN}")
-    
+
     config = TradingConfig.from_yaml("configs/data.yaml")
     reddit_client = RedditClient(subreddits=config.subreddits)
     market_client = MarketClient(config)
     sentiment_analyzer = EnhancedSentimentAnalyzer(symbols=config.symbols)
     model = ImprovedTradingModel()
     executor = BinanceExecutor()
-    COOLDOWN_HOURS = 4  # Wait 4 hours after selling before buying same symbol
-    MIN_HOLD_HOURS = 2  # Minimum hold time for a position
 
-    ledger = PaperLedger(
-    starting_usdt=1000.0,
-    fee_per_side=config.fee_per_side,
-    slippage_per_side=config.slippage_per_side
+    # --- INITIALIZE PORTFOLIO & RISK MANAGEMENT ---
+    portfolio = PortfolioRiskManager(
+        initial_capital=STARTING_CAPITAL,
+        max_positions=5,
+        max_exposure=RISK_CONFIG['max_total_exposure'],
+        max_single_position=RISK_CONFIG['max_position_pct'],
+        max_correlated_exposure=0.30,
+        max_sector_exposure=0.30,
+        fee_per_side=config.fee_per_side,
+        slippage_per_side=config.slippage_per_side
     )
+
+    position_sizer = PositionSizer(
+        account_value=STARTING_CAPITAL,
+        max_position_pct=RISK_CONFIG['max_position_pct'],
+        max_total_exposure=RISK_CONFIG['max_total_exposure']
+    )
+
+    stop_manager = StopLossManager(
+        default_stop_pct=RISK_CONFIG['default_stop_pct'],
+        default_take_profit_pct=RISK_CONFIG['default_take_profit_pct'],
+        atr_multiplier=RISK_CONFIG['atr_multiplier']
+    )
+
+    exit_manager = ExitManager(
+        min_hold_hours=RISK_CONFIG['min_hold_hours'],
+        max_hold_hours=RISK_CONFIG['max_hold_hours'],
+        stop_loss_pct=RISK_CONFIG['default_stop_pct'],
+        take_profit_pct=RISK_CONFIG['default_take_profit_pct']
+    )
+
+    risk_budget = RiskBudget(
+        account_value=STARTING_CAPITAL,
+        max_daily_loss=RISK_CONFIG['max_daily_loss'],
+        max_drawdown=RISK_CONFIG['max_drawdown']
+    )
+
+    # Track last daily reset
+    last_daily_reset = datetime.now(timezone.utc).date()
+
+    logger.info(f"Risk Management initialized: {RISK_CONFIG}")
 
     # --- 1. LOAD & MERGE DATA FIRST ---
     logger.info("--- LOADING DATASETS ---")
@@ -198,7 +170,23 @@ def main():
     while True:
         try:
             logger.info("--- STARTING LIVE CYCLE ---")
-            
+            current_time = datetime.now(timezone.utc)
+
+            # --- DAILY RESET CHECK ---
+            today = current_time.date()
+            if today > last_daily_reset:
+                logger.info("New day detected - resetting daily risk limits")
+                risk_budget.reset_daily()
+                last_daily_reset = today
+
+            # --- CHECK IF TRADING IS HALTED ---
+            if not risk_budget.can_trade():
+                status = risk_budget.get_status()
+                logger.warning(f"TRADING HALTED: {status['halt_reasons']}")
+                logger.info(f"Sleeping {LOOP_INTERVAL}s (halted)...")
+                time.sleep(LOOP_INTERVAL)
+                continue
+
             # A. Fetch Live Data
             live_reddit = reddit_client.fetch_live(limit=500)
             if not live_reddit.empty:
@@ -206,27 +194,24 @@ def main():
                 # Keep last 30 days rolling
                 cutoff = datetime.now(timezone.utc) - timedelta(days=30)
                 master_reddit = master_reddit[master_reddit['created_utc'] > cutoff]
-                
+
                 master_reddit.to_csv(data_path, index=False)
                 logger.info(f"Database updated: {len(master_reddit)} posts.")
 
             # Lookback increased to 5 days to support 48h lags
-            live_market = market_client.fetch_ohlcv(lookback_days=5) 
+            live_market = market_client.fetch_ohlcv(lookback_days=5)
 
             # B. Analyze & Predict
             live_sentiment = sentiment_analyzer.analyze(master_reddit)
             pred_df = model.prepare_features(live_market, live_sentiment, is_inference=True)
-            
-            # PASS is_inference=True TO PREVENT DROPPING THE LIVE ROW
-            pred_df = model.prepare_features(live_market, live_sentiment, is_inference=True)
-            
+
             if pred_df.empty:
                 logger.warning("No features generated. Waiting...")
                 time.sleep(60)
                 continue
 
             latest_ts = pred_df['timestamp'].max()
-            
+
             # Sanity Check: Ensure we are predicting for the current hour
             current_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0).replace(tzinfo=None)
             logger.info(f"Latest Data Timestamp: {latest_ts} | Current UTC Hour: {current_hour}")
@@ -235,13 +220,9 @@ def main():
             logger.info(f"Predicting on {len(latest_features)} symbols (Time: {latest_ts})")
 
             signals = model.predict(latest_features)
-            
-            # C. Execution (Paper vs Real)
-            # Build a small price map for equity marking (only need symbols we hold or act on)
-            current_time = datetime.now(timezone.utc) # UTC-aware for calc
-            
-            # Build price map
-            symbols_to_price = set(signals.keys()) | set(ledger.positions.keys())
+
+            # C. Build price map for all relevant symbols
+            symbols_to_price = set(signals.keys()) | set(portfolio.state.positions.keys())
             price_map = {}
             for sym in symbols_to_price:
                 try:
@@ -249,6 +230,33 @@ def main():
                 except Exception:
                     pass
 
+            # --- UPDATE ACCOUNT VALUE FOR POSITION SIZER ---
+            current_equity = portfolio.equity(price_map)
+            position_sizer.update_account_value(current_equity)
+            risk_budget.update(current_equity)
+
+            # --- CHECK STOP-LOSSES FIRST (Risk override - exits immediately) ---
+            stop_actions = stop_manager.check_stops(price_map, pd.Timestamp(current_time))
+            for symbol, action in stop_actions.items():
+                if action and portfolio.has_position(symbol):
+                    pos = portfolio.get_position(symbol)
+                    price = price_map.get(symbol)
+
+                    if DRY_RUN:
+                        trade = portfolio.close_position(symbol, mid_price=price, reason=action, exit_time=pd.Timestamp(current_time))
+                        if trade:
+                            logger.warning(f"[PAPER] {action.upper()} EXIT {symbol} @ ${price:.4f} P&L=${trade['pnl']:.2f}")
+                            risk_budget.record_trade(trade['pnl'])
+                            stop_manager.remove_stop(symbol)
+                    else:
+                        order = executor.execute_order(symbol, "SELL", quantity=None)
+                        if order:
+                            trade = portfolio.close_position(symbol, mid_price=price, reason=action)
+                            if trade:
+                                risk_budget.record_trade(trade['pnl'])
+                            stop_manager.remove_stop(symbol)
+
+            # D. Process signals with risk management
             for symbol, signal in signals.items():
                 action = signal['action']
                 confidence = signal['confidence']
@@ -257,71 +265,136 @@ def main():
                     continue
 
                 # Check current holding state
-                pos = ledger.positions.get(symbol, {})
-                current_qty = pos.get("qty", 0.0)
-                is_holding = current_qty > 0
+                is_holding = portfolio.has_position(symbol)
 
                 if action == "BUY":
                     # GATE 1: State Awareness - Don't double buy
                     if is_holding:
                         continue
 
-                    # GATE 2: Cooldown Check
-                    last_exit = ledger.last_exit.get(symbol)
-                    if last_exit:
-                        # Ensure timezone awareness compatibility
-                        if last_exit.tzinfo is None:
-                            last_exit = last_exit.replace(tzinfo=timezone.utc)
+                    # GATE 2: Cooldown Check (using PortfolioRiskManager)
+                    in_cooldown, hours_remaining = portfolio.is_in_cooldown(
+                        symbol,
+                        RISK_CONFIG['cooldown_hours'],
+                        pd.Timestamp(current_time)
+                    )
+                    if in_cooldown:
+                        logger.info(f"COOLDOWN BLOCKED BUY {symbol}: {hours_remaining:.1f}h remaining")
+                        continue
 
-                        hours_since_exit = (current_time - last_exit).total_seconds() / 3600
-                        if hours_since_exit < COOLDOWN_HOURS:
-                            logger.info(f"COOLDOWN BLOCKED BUY {symbol}: Exited {hours_since_exit:.1f}h ago (<{COOLDOWN_HOURS}h)")
-                            continue
+                    # GATE 3: Portfolio-level risk checks
+                    can_open, block_reason = portfolio.can_open_position(symbol, 100, price_map)  # Quick check
+                    if not can_open:
+                        logger.info(f"PORTFOLIO BLOCKED {symbol}: {block_reason}")
+                        continue
+
+                    # GATE 4: Get volatility for position sizing (use ATR % if available)
+                    symbol_features = latest_features[latest_features['symbol'] == symbol]
+                    if not symbol_features.empty and 'atr_14_pct' in symbol_features.columns:
+                        volatility = symbol_features['atr_14_pct'].iloc[0]
+                        atr_value = symbol_features['atr_14'].iloc[0] if 'atr_14' in symbol_features.columns else None
+                    else:
+                        volatility = 0.02  # Default 2% if not available
+                        atr_value = None
+
+                    # GATE 5: Calculate position size using risk management
+                    current_positions = {
+                        sym: pos.value
+                        for sym, pos in portfolio.state.positions.items()
+                    }
+
+                    position_calc = position_sizer.calculate_position(
+                        symbol=symbol,
+                        price=price,
+                        confidence=confidence,
+                        volatility=volatility,
+                        current_positions=current_positions
+                    )
+
+                    if position_calc['size_usd'] <= 0:
+                        logger.info(f"POSITION SIZING BLOCKED {symbol}: {position_calc.get('reason', 'size=0')}")
+                        continue
+
+                    notional_usd = position_calc['size_usd']
+                    quantity = position_calc['quantity']
 
                     if DRY_RUN:
-                        ok = ledger.buy(symbol, mid_price=price, notional_usdt=TRADE_NOTIONAL_USDT, current_time=current_time)
+                        ok = portfolio.open_position(symbol, notional_usd=notional_usd, mid_price=price, entry_time=pd.Timestamp(current_time))
                         if ok:
                             logger.info(
-                                f"[PAPER] BUY {symbol} notional=${TRADE_NOTIONAL_USDT:.2f} "
-                                f"mid={price:.6f} conf={confidence:.2f}"
+                                f"[PAPER] BUY {symbol} ${notional_usd:.2f} ({position_calc['pct_of_account']:.1%} of acct) "
+                                f"@ ${price:.4f} conf={confidence:.2f} sizing={position_calc['limiting_factor']}"
                             )
+                            # Create stop-loss for the position
+                            if atr_value and atr_value > 0:
+                                stop_manager.create_atr_stop(symbol, price, quantity, atr_value)
+                            else:
+                                stop_manager.create_fixed_stop(symbol, price, quantity)
                         else:
                             logger.info(f"[PAPER] BUY skipped (insufficient cash) {symbol}")
                     else:
-                        quantity = round(TRADE_NOTIONAL_USDT / price, 5)
-                        executor.execute_order(symbol, "BUY", quantity)
+                        qty_rounded = round(quantity, 5)
+                        order = executor.execute_order(symbol, "BUY", qty_rounded)
+                        if order:
+                            if atr_value and atr_value > 0:
+                                stop_manager.create_atr_stop(symbol, price, qty_rounded, atr_value)
+                            else:
+                                stop_manager.create_fixed_stop(symbol, price, qty_rounded)
 
                 elif action == "SELL":
-                    # GATE 1: State Awareness - Can't sell what you don't have
+                    # GATE 1: Can't sell what you don't have
                     if not is_holding:
                         continue
 
-                    # GATE 3: Minimum Hold Time
-                    entry_ts = pos.get("entry_ts")
-                    if entry_ts:
-                        # Ensure timezone awareness
-                        if entry_ts.tzinfo is None:
-                            entry_ts = entry_ts.replace(tzinfo=timezone.utc)
+                    # GATE 2: Use ExitManager for hold time + risk override logic
+                    pos = portfolio.get_position(symbol)
+                    entry_price = pos.entry_price
+                    entry_ts = pos.entry_time
 
-                        hours_held = (current_time - entry_ts).total_seconds() / 3600
-                        if hours_held < MIN_HOLD_HOURS:
-                            logger.info(f"MIN HOLD BLOCKED SELL {symbol}: Held {hours_held:.1f}h (<{MIN_HOLD_HOURS}h)")
-                            continue
+                    exit_decision = exit_manager.should_exit(
+                        symbol=symbol,
+                        entry_price=entry_price,
+                        current_price=price,
+                        entry_time=entry_ts,
+                        signal_says_sell=True,
+                        current_time=pd.Timestamp(current_time)
+                    )
 
+                    if not exit_decision.can_exit:
+                        logger.info(f"EXIT BLOCKED {symbol}: {exit_decision.details}")
+                        continue
+
+                    exit_reason = exit_decision.reason.value
+
+                    # Execute sell
                     if DRY_RUN:
-                        ok = ledger.sell_all(symbol, mid_price=price, current_time=current_time)
-                        if ok:
-                            logger.info(f"[PAPER] SELL_ALL {symbol} mid={price:.6f} conf={confidence:.2f}")
+                        trade = portfolio.close_position(symbol, mid_price=price, reason=exit_reason, exit_time=pd.Timestamp(current_time))
+                        if trade:
+                            logger.info(
+                                f"[PAPER] SELL {symbol} @ ${price:.4f} reason={exit_reason} "
+                                f"P&L=${trade['pnl']:.2f} ({trade['pnl_pct']:.1%})"
+                            )
+                            risk_budget.record_trade(trade['pnl'])
+                            stop_manager.remove_stop(symbol)
                     else:
-                        executor.execute_order(symbol, "SELL", quantity=None)
+                        order = executor.execute_order(symbol, "SELL", quantity=None)
+                        if order:
+                            trade = portfolio.close_position(symbol, mid_price=price, reason=exit_reason)
+                            if trade:
+                                risk_budget.record_trade(trade['pnl'])
+                            stop_manager.remove_stop(symbol)
 
-            # Log ledger mark-to-market status each cycle
-            snap = ledger.snapshot(price_map)
+            # E. Log portfolio status
+            summary = portfolio.get_summary(price_map)
+            risk_status = risk_budget.get_status()
+            active_stops = stop_manager.get_all_stops()
+
             logger.info(
-                f"[PAPER_LEDGER] USDT=${snap['usdt']:.2f} | Equity=${snap['equity']:.2f} | "
-                f"RealizedPnL=${snap['realized_pnl']:.2f} | Fees=${snap['fees_paid']:.2f} | "
-                f"OpenPositions={len(snap['positions'])}"
-)
+                f"[PORTFOLIO] Equity=${summary['total_value']:.2f} | Cash=${summary['cash']:.2f} | "
+                f"RealizedPnL=${summary['total_realized_pnl']:.2f} | Fees=${summary['total_fees_paid']:.2f} | "
+                f"DailyPnL=${risk_status['daily_pnl']:.2f} | Drawdown={risk_status['drawdown']:.1%} | "
+                f"Positions={summary['n_positions']} | ActiveStops={len(active_stops)}"
+            )
 
 
             # D. Retrain Cycle
