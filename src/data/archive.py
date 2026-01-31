@@ -36,6 +36,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+DB_PATH = Path("data/reddit_archive.db")
 # Default archive location
 ARCHIVE_DIR = Path("data")
 ARCHIVE_DB_PATH = ARCHIVE_DIR / "reddit_archive.db"
@@ -95,11 +96,7 @@ def get_connection(db_path: Optional[Path] = None) -> Generator[sqlite3.Connecti
     path = db_path or ARCHIVE_DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(
-        str(path),
-        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-        timeout=30.0,  # Wait up to 30s for locks
-    )
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
     try:
@@ -377,7 +374,7 @@ def load_archive(
         params.append(limit)
 
     with get_connection(db_path) as conn:
-        df = pd.read_sql_query(query, conn, params=params)
+        df = pd.read_sql_query(query, conn, params=params, parse_dates=["created_utc"])
 
     if "created_utc" in df.columns:
         df["created_utc"] = pd.to_datetime(df["created_utc"])
@@ -428,7 +425,7 @@ def load_sentiment(
     query += " ORDER BY timestamp DESC"
 
     with get_connection(db_path) as conn:
-        df = pd.read_sql_query(query, conn, params=params)
+        df = pd.read_sql_query(query, conn, params=params, parse_dates=["created_utc"])
 
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"])

@@ -199,9 +199,9 @@ def main(run_once: bool = False, dry_run: bool = True):
 
     # Determine date range for market data
     if not full_training_data.empty:
-        min_date = full_training_data['created_utc'].min()
-        days_needed = (datetime.now(timezone.utc) - min_date).days + 5
-        logger.info(f"Fetching {days_needed} days of market data for deep training...")
+        min_reddit_date = full_training_data['created_utc'].min()
+        days_needed = (datetime.now(timezone.utc) - min_reddit_date).days + 3
+        logger.info(f"Reddit data starts {min_reddit_date}. Fetching {days_needed} days of market data.")
         
         full_market = market_client.fetch_ohlcv(lookback_days=days_needed)
         full_sentiment = sentiment_analyzer.analyze(full_training_data)
@@ -250,7 +250,7 @@ def main(run_once: bool = False, dry_run: bool = True):
                 continue
 
             # A. Fetch Live Data
-            live_reddit = reddit_client.fetch_live(limit=500)
+            live_reddit = reddit_client.fetch_live(limit=100)
             if not live_reddit.empty:
                 append_to_archive(live_reddit)
                 master_reddit = pd.concat([master_reddit, live_reddit]).drop_duplicates(subset=['id'])

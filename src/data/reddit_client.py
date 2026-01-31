@@ -10,15 +10,15 @@ logger = logging.getLogger(__name__)
 
 # Common spam patterns and scam domains
 SPAM_PATTERNS = [
-    r"(?i)dm\s*me\s*for",  # "DM me for..."
-    r"(?i)check\s*my\s*profile",
-    r"(?i)link\s*in\s*bio",
-    r"(?i)guaranteed\s*returns",
-    r"(?i)\d+x\s*gains?\s*guaranteed",
-    r"(?i)free\s*crypto\s*giveaway",
-    r"(?i)send\s*\d+\s*(btc|eth|sol)",  # "send 0.1 BTC"
-    r"(?i)airdrop.*wallet",
-    r"(?i)pump\s*(and|&)?\s*dump",
+    r"dm\s*me\s*for",  # "DM me for..."
+    r"check\s*my\s*profile",
+    r"link\s*in\s*bio",
+    r"guaranteed\s*returns",
+    r"\d+x\s*gains?\s*guaranteed",
+    r"free\s*crypto\s*giveaway",
+    r"send\s*\d+\s*(btc|eth|sol)",  # "send 0.1 BTC"
+    r"airdrop.*wallet",
+    r"pump\s*(and|&)?\s*dump",
 ]
 
 SCAM_DOMAINS = [
@@ -46,7 +46,7 @@ class RedditClient:
     def __init__(self, subreddits: List[str], filter_spam: bool = True):
         self.subreddits = subreddits
         self.filter_spam = filter_spam
-        self._spam_pattern = re.compile("|".join(SPAM_PATTERNS))
+        self._spam_pattern = re.compile("|".join(SPAM_PATTERNS), flags=re.IGNORECASE)
 
         try:
             self.reddit = praw.Reddit(
@@ -155,7 +155,7 @@ class RedditClient:
         for sub in self.subreddits:
             try:
                 # fetch 'new' to get the latest history (limit=1000 is Reddit's max)
-                posts = self.reddit.subreddit(sub).new(limit=1000)
+                posts = self.reddit.subreddit(sub).new(limit=100)
 
                 count = 0
                 spam_count = 0
@@ -191,7 +191,7 @@ class RedditClient:
         df = pd.DataFrame(all_posts)
         return df
 
-    def fetch_live(self, limit: int = 500) -> pd.DataFrame:
+    def fetch_live(self, limit: int = 100) -> pd.DataFrame:
         """
         Fetch the last N posts via Official API (Real-time).
 
