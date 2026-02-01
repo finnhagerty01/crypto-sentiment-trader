@@ -94,7 +94,7 @@ class TradingModelTuner:
                     "reg_lambda", 1e-8, 10.0, log=True
                 ),
                 "random_state": 42,
-                "n_jobs": -1,
+                "n_jobs": 1,
                 "eval_metric": "logloss",
             }
 
@@ -177,7 +177,7 @@ class TradingModelTuner:
                 ),
                 "class_weight": "balanced",
                 "random_state": 42,
-                "n_jobs": -1,
+                "n_jobs": 1,
                 "verbose": -1,
             }
 

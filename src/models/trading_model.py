@@ -151,7 +151,7 @@ class ImprovedTradingModel:
     def optimize_hyperparameters(self, X: np.ndarray, y: np.ndarray):
         """Run Optuna tuning for XGBoost and LightGBM."""
         logger.info("Starting hyperparameter tuning (this may take a while)...")
-        tuner = TradingModelTuner(n_trials=20, validation_metric="f1", timeout=600)
+        tuner = TradingModelTuner(n_trials=10, validation_metric="f1", timeout=600)
         
         # Tune XGBoost
         logger.info("Tuning XGBoost...")
@@ -284,7 +284,7 @@ class ImprovedTradingModel:
         buy_probs = probas[:, 1]
         if len(buy_probs) > 0:
             logger.info(f"Max Buy Prob: {buy_probs.max():.4f} (Threshold: {self.enter_threshold})")
-            
+
         signals = {}
         for i, (_, row) in enumerate(recent_df.iterrows()):
             symbol = row["symbol"]
