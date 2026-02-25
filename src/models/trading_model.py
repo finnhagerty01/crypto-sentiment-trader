@@ -237,7 +237,7 @@ class ImprovedTradingModel:
         # 4. Feature Selection
         if feature_selection:
             logger.info("Refining feature set to remove noise...")
-            refined_features = self.perform_feature_selection(top_n_percent=0.5)
+            refined_features = self.perform_feature_selection(top_n_percent=0.75)
             self.features = refined_features
             
             # Re-select X based on new feature list
