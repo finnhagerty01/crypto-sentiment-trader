@@ -44,7 +44,17 @@ class TradingConfig:
     min_hold_bars: int = 0
     fee_per_side: float = 0.00010
     slippage_per_side: float = 0.0005
-    min_confidence: float = 0.40
+    min_confidence: float = 0.46
+    max_position_pct: float = 0.15
+    max_total_exposure: float = 0.50
+    default_stop_pct: float = 0.03
+    default_take_profit_pct: float = 0.06
+    atr_multiplier: float = 2.0
+    min_hold_hours: float = 2.0
+    max_hold_hours: float = 48.0
+    max_daily_loss: float = 0.05
+    max_drawdown: float = 0.15
+    cooldown_hours: float = 4
 
     # Paths
     data_dir: Path = Path("data")
@@ -52,14 +62,6 @@ class TradingConfig:
     raw_market_dir: Path = Path("data/raw/market")
     processed_dir: Path = Path("data/processed")
     models_dir: Path = Path("models")
-
-    # External services
-    arctic_shift_api_key: Optional[str] = field(
-        default_factory=lambda: os.getenv("ARCTIC_SHIFT_API_KEY")
-    )
-    arctic_shift_base_url: str = field(
-        default_factory=lambda: os.getenv("ARCTIC_SHIFT_BASE_URL", "https://arctic-shift.photon-reddit.com/api")
-    )
 
     # Data pre-processing options
     apply_kalman_filter: bool = False

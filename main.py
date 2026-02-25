@@ -74,21 +74,6 @@ logger = logging.getLogger("MainOrchestrator")
 LOOP_INTERVAL = 3600
 STARTING_CAPITAL = 1000.0
 
-# --- RISK CONFIGURATION ---
-RISK_CONFIG = {
-    'max_position_pct': 0.15,
-    'max_total_exposure': 0.50,
-    'min_confidence': 0.55,
-    'default_stop_pct': 0.03,
-    'default_take_profit_pct': 0.06,
-    'atr_multiplier': 2.0,
-    'min_hold_hours': 2.0,
-    'max_hold_hours': 48.0,
-    'max_daily_loss': 0.05,
-    'max_drawdown': 0.15,
-    'cooldown_hours': 4,
-}
-
 
 def main(run_once: bool = False, dry_run: bool = True):
     """
@@ -123,8 +108,8 @@ def main(run_once: bool = False, dry_run: bool = True):
     portfolio = PortfolioRiskManager(
         initial_capital=STARTING_CAPITAL,
         max_positions=5,
-        max_exposure=RISK_CONFIG['max_total_exposure'],
-        max_single_position=RISK_CONFIG['max_position_pct'],
+        max_exposure=config.max_total_exposure,
+        max_single_position=config.max_position_pct,
         max_correlated_exposure=0.30,
         max_sector_exposure=0.30,
         fee_per_side=config.fee_per_side,
@@ -133,31 +118,31 @@ def main(run_once: bool = False, dry_run: bool = True):
 
     position_sizer = PositionSizer(
         account_value=STARTING_CAPITAL,
-        max_position_pct=RISK_CONFIG['max_position_pct'],
-        max_total_exposure=RISK_CONFIG['max_total_exposure']
+        max_position_pct=config.max_position_pct,
+        max_total_exposure=config.max_total_exposure
     )
 
     stop_manager = StopLossManager(
-        default_stop_pct=RISK_CONFIG['default_stop_pct'],
-        default_take_profit_pct=RISK_CONFIG['default_take_profit_pct'],
-        atr_multiplier=RISK_CONFIG['atr_multiplier']
+        default_stop_pct=config.default_stop_pct,
+        default_take_profit_pct=config.default_take_profit_pct,
+        atr_multiplier=config.atr_multiplier
     )
 
     exit_manager = ExitManager(
-        min_hold_hours=RISK_CONFIG['min_hold_hours'],
-        max_hold_hours=RISK_CONFIG['max_hold_hours'],
-        stop_loss_pct=RISK_CONFIG['default_stop_pct'],
-        take_profit_pct=RISK_CONFIG['default_take_profit_pct']
+        min_hold_hours=config.min_hold_hours,
+        max_hold_hours=config.max_hold_hours,
+        stop_loss_pct=config.default_stop_pct,
+        take_profit_pct=config.default_take_profit_pct
     )
 
     risk_budget = RiskBudget(
         account_value=STARTING_CAPITAL,
-        max_daily_loss=RISK_CONFIG['max_daily_loss'],
-        max_drawdown=RISK_CONFIG['max_drawdown']
+        max_daily_loss=config.max_daily_loss,
+        max_drawdown=config.max_drawdown
     )
 
     last_daily_reset = datetime.now(timezone.utc).date()
-    logger.info(f"Risk Management initialized: {RISK_CONFIG}")
+    logger.info(f"Risk Management initialized")
 
     # --- 1. SYNC & PREPARE DATA ---
     logger.info("--- DATA SYNCHRONIZATION ---")
@@ -262,7 +247,8 @@ def main(run_once: bool = False, dry_run: bool = True):
 
             # Fetch just enough market data for inference (and small retrains)
             live_market = market_client.fetch_ohlcv(lookback_days=35) # 30 days + buffer
-
+            if not live_market.empty:
+                portfolio.update_price_history(live_market)
             # B. Analyze & Predict
             # Note: We analyze master_reddit (rolling window) for sentiment context
             live_sentiment = sentiment_analyzer.analyze(master_reddit)
@@ -323,7 +309,7 @@ def main(run_once: bool = False, dry_run: bool = True):
 
                 if action == "BUY" and not is_holding:
                     # Risk Checks
-                    in_cooldown, _ = portfolio.is_in_cooldown(symbol, RISK_CONFIG['cooldown_hours'], pd.Timestamp(current_time))
+                    in_cooldown, _ = portfolio.is_in_cooldown(symbol, config.cooldown_hours, pd.Timestamp(current_time))
                     if in_cooldown: continue
                     
                     if not portfolio.can_open_position(symbol, 100, price_map)[0]: continue
@@ -339,6 +325,7 @@ def main(run_once: bool = False, dry_run: bool = True):
 
                     pos_calc = position_sizer.calculate_position(
                         symbol, price, confidence, vol, 
+                        config.min_confidence,
                         {s: p.value for s, p in portfolio.state.positions.items()}
                     )
                     

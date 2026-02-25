@@ -36,6 +36,16 @@ trading_params:
   fee_per_side: 0.00010
   slippage_per_side: 0.0005
   min_confidence: 0.46
+  max_position_pct: 0.15
+  max_total_exposure: 0.50
+  default_stop_pct: 0.03
+  default_take_profit_pct: 0.06
+  atr_multiplier: 2.0
+  min_hold_hours: 2.0
+  max_hold_hours: 48.0
+  max_daily_loss: 0.05
+  max_drawdown: 0.15
+  cooldown_hours: 4
 
 # Data settings
 reddit_limit_per_sub: 500 # The YAML value (500) overrides the Python default (200)
