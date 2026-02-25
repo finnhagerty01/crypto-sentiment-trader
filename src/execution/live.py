@@ -37,17 +37,23 @@ class BinanceExecutor:
         If side is SELL and quantity is None, sells entire available balance.
         """
         try:
-            # Auto-calculate sell amount if not provided
+            # Auto-calculate sell amount if not provided (Sell All)
             if side == "SELL" and quantity is None:
                 qty = self.get_token_balance(symbol)
-                # Simple Dust Check (Value < $10)
                 price = self.get_price(symbol)
-                if (qty * price) < 10.0:
-                    logger.info(f"Skipping SELL for {symbol}: Value under $10 (Dust).")
-                    return None
+                value = qty * price
+                
+                if value < 10.0:
+                    logger.warning(f"Attempting 'dust' SELL for {symbol} (Value: ${value:.2f}). Note: Binance may reject orders < $10.")
+                
                 quantity = qty
 
+            # Round quantity to avoid precision errors (adjust precision as needed per asset)
+            if quantity:
+                quantity = float(f"{quantity:.5f}")
+
             logger.info(f"EXECUTING {side} {quantity} {symbol}")
+            
             order = self.client.create_order(
                 symbol=symbol,
                 side=side,

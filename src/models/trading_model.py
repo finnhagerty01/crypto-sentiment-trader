@@ -98,18 +98,18 @@ class ImprovedTradingModel:
 
         # Feature Lists (Same as your original)
         technical_features = [
-            "rsi_14", "rsi_6", "rsi_divergence", "macd_histogram", "macd_crossover",
+            "rsi_14", "rsi_divergence", "macd_histogram", "macd_crossover",
             "bb_percent_b", "bb_bandwidth", "bb_squeeze", "atr_14_pct", "atr_expansion",
-            "adx", "trend_strength", "ma_spread", "price_above_sma20",
-            "volume_ratio", "volume_spike", "mfi", "return_1h", "return_4h",
+            "adx", "ma_spread",
+            "volume_ratio", "mfi", "return_1h",
             "dist_from_24h_high", "dist_from_24h_low",
         ]
         sentiment_features = [
-            "sentiment_velocity", "sentiment_acceleration", "sentiment_macd", 
-            "sentiment_rsi", "sentiment_reversal", "sentiment_std", "sentiment_consensus",
-            "extreme_bullish_ratio", "extreme_bearish_ratio", "sentiment_engagement_weighted", 
-            "sentiment_high_engagement", "total_engagement", "market_sentiment", 
-            "sentiment_vs_market", "sentiment_z_score", "sentiment_regime_numeric",
+            "sentiment_velocity", "sentiment_macd",
+            "sentiment_reversal", "sentiment_std", "sentiment_consensus",
+            "extreme_bullish_ratio", "extreme_bearish_ratio",
+            "total_engagement", "market_sentiment",
+            "sentiment_z_score",
         ]
 
         # Combine and Fill
@@ -217,7 +217,7 @@ class ImprovedTradingModel:
             tune_df = df[df["symbol"] == validation_symbol].copy().sort_values("timestamp")
             
             if len(tune_df) > self.validator.min_train_size:
-                X_tune = tune_df[self.features].values
+                X_tune = tune_df[self.features]
                 y_tune = tune_df["target"].values
                 self.optimize_hyperparameters(X_tune, y_tune)
             else:
@@ -225,7 +225,7 @@ class ImprovedTradingModel:
 
         # --- NORMAL TRAINING FLOW ---
         # We still fit the final model on ALL data (all symbols) to capture general patterns
-        X = df[self.features].values
+        X = df[self.features]
         y = df["target"].values
 
         # 3. Initial Fit (to get feature importances)
@@ -241,7 +241,7 @@ class ImprovedTradingModel:
             self.features = refined_features
             
             # Re-select X based on new feature list
-            X = df[self.features].values
+            X = df[self.features]
             
             # Final Fit
             logger.info(f"Retraining on {len(self.features)} best features...")
@@ -279,7 +279,7 @@ class ImprovedTradingModel:
             # Handle missing by filling 0 or warning
             for m in missing: recent_df[m] = 0.0
             
-        X = recent_df[self.features].values
+        X = recent_df[self.features]
         probas = self.ensemble.predict_proba(X)
         buy_probs = probas[:, 1]
         if len(buy_probs) > 0:

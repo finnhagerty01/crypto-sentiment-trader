@@ -409,7 +409,7 @@ class AdvancedSentimentAnalyzer:
             'bullish': 1,
             'very_bullish': 2
         }
-        df['sentiment_regime_numeric'] = df['sentiment_regime_level'].map(regime_map)
+        df['sentiment_regime_numeric'] = df['sentiment_regime_level'].map(regime_map).astype(float)
 
         # Momentum-based regime
         if 'sentiment_velocity' in df.columns:

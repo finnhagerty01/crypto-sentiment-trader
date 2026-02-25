@@ -197,6 +197,7 @@ class PositionSizer:
         price: float,
         confidence: float,
         volatility: float,
+        min_confidence: float = .55,
         win_rate: Optional[float] = None,
         avg_win: Optional[float] = None,
         avg_loss: Optional[float] = None,
@@ -253,7 +254,7 @@ class PositionSizer:
         sizes = []
 
         # 1. Confidence-weighted (primary filter)
-        confidence_size = self.signal_confidence_weighted(confidence)
+        confidence_size = self.signal_confidence_weighted(confidence, min_confidence=min_confidence)
         if confidence_size <= 0:
             return {
                 'symbol': symbol,
