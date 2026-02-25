@@ -16,6 +16,8 @@ data/
 models/
 !src/models/
 logs/
+# Generated artifacts
+outputs/
 #Claude
 trade_bot.log
 .claude/
