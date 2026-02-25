@@ -18,3 +18,4 @@ seaborn
 optuna
 torch
 transformers
+shap
