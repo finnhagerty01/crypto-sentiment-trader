@@ -190,8 +190,10 @@ def main(run_once: bool = False, dry_run: bool = True):
         
         full_market = market_client.fetch_ohlcv(lookback_days=days_needed)
         full_sentiment = sentiment_analyzer.analyze(full_training_data)
-        
-        train_df = model.prepare_features(full_market, full_sentiment, is_inference=False)
+        funding_df = market_client.fetch_funding_rates(lookback_days=days_needed)
+        oi_df = market_client.fetch_open_interest(lookback_days=days_needed)
+
+        train_df = model.prepare_features(full_market, full_sentiment, is_inference=False, funding_df=funding_df, oi_df=oi_df)
         
         if not train_df.empty:
             logger.info(">> STARTING HYPERPARAMETER TUNING & FEATURE SELECTION <<")
@@ -252,9 +254,11 @@ def main(run_once: bool = False, dry_run: bool = True):
             # B. Analyze & Predict
             # Note: We analyze master_reddit (rolling window) for sentiment context
             live_sentiment = sentiment_analyzer.analyze(master_reddit)
-            
+            live_funding = market_client.fetch_funding_rates(lookback_days=35)
+            live_oi = market_client.fetch_open_interest(lookback_days=35)
+
             # Generate features for INFERENCE (is_inference=True)
-            pred_df = model.prepare_features(live_market, live_sentiment, is_inference=True)
+            pred_df = model.prepare_features(live_market, live_sentiment, is_inference=True, funding_df=live_funding, oi_df=live_oi)
 
             if pred_df.empty:
                 logger.warning("No features generated. Waiting...")
@@ -376,8 +380,8 @@ def main(run_once: bool = False, dry_run: bool = True):
                 train_sentiment = sentiment_analyzer.analyze(master_reddit)
 
                 # 2. Prepare features
-                # We reuse live_market which covers the last ~35 days
-                train_df = model.prepare_features(live_market, train_sentiment, is_inference=False)
+                # We reuse live_market and derivatives data which covers the last ~35 days
+                train_df = model.prepare_features(live_market, train_sentiment, is_inference=False, funding_df=live_funding, oi_df=live_oi)
 
                 if not train_df.empty:
                     # 3. Train WITHOUT tuning or feature selection

@@ -94,13 +94,18 @@ def load_and_prepare_data():
     sentiment_analyzer = EnhancedSentimentAnalyzer(symbols=config.symbols)
     sentiment_df = sentiment_analyzer.analyze(reddit_data)
 
+    # Fetch derivatives data
+    logger.info("Fetching funding rates and open interest...")
+    funding_df = market_client.fetch_funding_rates(lookback_days=days_needed)
+    oi_df = market_client.fetch_open_interest(lookback_days=days_needed)
+
     logger.info("Building features via model.prepare_features()...")
     model = ImprovedTradingModel(
         enter_threshold=config.enter_threshold,
         exit_threshold=config.exit_threshold,
         min_confidence=config.min_confidence,
     )
-    train_df = model.prepare_features(market_df, sentiment_df, is_inference=False)
+    train_df = model.prepare_features(market_df, sentiment_df, is_inference=False, funding_df=funding_df, oi_df=oi_df)
 
     if train_df.empty:
         logger.error("Feature preparation returned empty DataFrame.")

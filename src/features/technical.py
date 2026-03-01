@@ -85,6 +85,15 @@ class TechnicalIndicators:
             # Price Action
             symbol_df = self._add_price_action(symbol_df, open_price, high, low, close)
 
+            # Microstructure (taker buy ratio)
+            symbol_df = self._add_microstructure(symbol_df, close, volume)
+
+            # Time features
+            symbol_df = self._add_time_features(symbol_df)
+
+            # Volatility regime
+            symbol_df = self._add_volatility_regime(symbol_df, close)
+
             result_dfs.append(symbol_df)
 
         return pd.concat(result_dfs).sort_values(['timestamp', 'symbol']).reset_index(drop=True)
@@ -371,6 +380,47 @@ class TechnicalIndicators:
         df['dist_from_24h_high'] = (rolling_high - close) / close
         df['dist_from_24h_low'] = (close - rolling_low) / close
 
+        return df
+
+    # ==================== MICROSTRUCTURE ====================
+
+    def _add_microstructure(self, df: pd.DataFrame,
+                            close: pd.Series,
+                            volume: pd.Series) -> pd.DataFrame:
+        """Add taker buy ratio features."""
+        if 'tb_base' in df.columns:
+            tb = df['tb_base']
+            df['taker_buy_ratio'] = tb / volume.replace(0, np.nan)
+            df['taker_buy_ratio_sma'] = df['taker_buy_ratio'].rolling(20).mean()
+        return df
+
+    # ==================== TIME FEATURES ====================
+
+    def _add_time_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add cyclical time-of-day and day-of-week features."""
+        ts = pd.to_datetime(df['timestamp'])
+        hour = ts.dt.hour
+        dow = ts.dt.dayofweek
+
+        df['hour_sin'] = np.sin(2 * np.pi * hour / 24)
+        df['hour_cos'] = np.cos(2 * np.pi * hour / 24)
+        df['dow_sin'] = np.sin(2 * np.pi * dow / 7)
+        df['dow_cos'] = np.cos(2 * np.pi * dow / 7)
+        return df
+
+    # ==================== VOLATILITY REGIME ====================
+
+    def _add_volatility_regime(self, df: pd.DataFrame,
+                               close: pd.Series) -> pd.DataFrame:
+        """Add realized volatility and percentile rank for regime detection."""
+        returns = close.pct_change()
+        df['realized_vol_24h'] = returns.rolling(24).std()
+
+        # Percentile rank: where current vol sits vs last 7 days (168 hours)
+        vol = df['realized_vol_24h']
+        df['vol_percentile'] = vol.rolling(168, min_periods=24).apply(
+            lambda x: pd.Series(x).rank(pct=True).iloc[-1], raw=False
+        )
         return df
 
 

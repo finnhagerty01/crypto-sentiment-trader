@@ -4,4 +4,26 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "langdetect>=1.0.9",
+    "lightgbm>=4.6.0",
+    "numpy>=2.4.2",
+    "optuna>=4.7.0",
+    "pandas>=2.3.3",
+    "plotly>=6.5.2",
+    "praw>=7.8.1",
+    "pyarrow>=23.0.1",
+    "python-binance>=1.0.35",
+    "python-dotenv>=1.2.1",
+    "pyyaml>=6.0.3",
+    "requests>=2.32.5",
+    "scikit-learn>=1.8.0",
+    "seaborn>=0.13.2",
+    "shap>=0.49.1",
+    "streamlit>=1.54.0",
+    "torch>=2.10.0",
+    "tqdm>=4.67.3",
+    "transformers>=5.2.0",
+    "vadersentiment>=3.3.2",
+    "xgboost>=3.2.0",
+]

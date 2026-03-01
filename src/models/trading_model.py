@@ -50,6 +50,8 @@ class ImprovedTradingModel:
         market_df: pd.DataFrame,
         sentiment_df: pd.DataFrame,
         is_inference: bool = False,
+        funding_df: pd.DataFrame = None,
+        oi_df: pd.DataFrame = None,
     ) -> pd.DataFrame:
         # ... (Keep your existing prepare_features logic exactly as is) ...
         # [Copy the entire prepare_features method from your original file here]
@@ -82,6 +84,30 @@ class ImprovedTradingModel:
         if "hourly_return" not in df.columns:
             df["hourly_return"] = df.groupby("symbol")["close"].pct_change().fillna(0.0)
 
+        # BTC Beta Residual (isolates altcoin-specific alpha)
+        if 'return_1h' in df.columns and 'BTCUSDT' in df['symbol'].values:
+            btc_returns = df[df['symbol'] == 'BTCUSDT'].set_index('timestamp')['return_1h']
+            df = df.merge(btc_returns.rename('btc_return_1h'), on='timestamp', how='left')
+            df['btc_return_1h'] = df['btc_return_1h'].fillna(0)
+            df['btc_beta'] = df.groupby('symbol').apply(
+                lambda g: g['return_1h'].rolling(24).cov(g['btc_return_1h']) / g['btc_return_1h'].rolling(24).var()
+            ).reset_index(level=0, drop=True)
+            df['btc_beta'] = df['btc_beta'].clip(-3, 3).fillna(1.0)
+            df['idiosyncratic_return'] = df['return_1h'] - df['btc_beta'] * df['btc_return_1h']
+
+        # Merge funding rate data
+        if funding_df is not None and not funding_df.empty:
+            df = df.merge(funding_df[['timestamp', 'symbol', 'funding_rate']], on=['timestamp', 'symbol'], how='left')
+            df['funding_rate'] = df['funding_rate'].fillna(0)
+
+        # Merge open interest data
+        if oi_df is not None and not oi_df.empty:
+            oi_cols = ['timestamp', 'symbol', 'oi_change']
+            if 'open_interest' in oi_df.columns:
+                oi_cols.append('open_interest')
+            df = df.merge(oi_df[oi_cols], on=['timestamp', 'symbol'], how='left')
+            df['oi_change'] = df['oi_change'].fillna(0)
+
         # Lags
         lags = [1, 2, 3, 6, 12, 24, 36, 48]
         lag_cols = []
@@ -103,6 +129,13 @@ class ImprovedTradingModel:
             "adx", "ma_spread",
             "volume_ratio", "mfi", "return_1h",
             "dist_from_24h_high", "dist_from_24h_low",
+            "taker_buy_ratio", "obv_trend",
+            "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+            "realized_vol_24h", "vol_percentile",
+            "btc_beta", "idiosyncratic_return",
+        ]
+        derivatives_features = [
+            "funding_rate", "oi_change",
         ]
         sentiment_features = [
             "sentiment_velocity", "sentiment_macd",
@@ -114,21 +147,22 @@ class ImprovedTradingModel:
 
         # Combine and Fill
         available_technical = [f for f in technical_features if f in df.columns]
+        available_derivatives = [f for f in derivatives_features if f in df.columns]
         available_sentiment = [f for f in sentiment_features if f in df.columns]
-        
+
         # If we have already selected "best features" via feature selection, use only those
         # Otherwise, use everything available
         if self.features and is_inference:
             # During inference, we must respect the trained feature set
             current_features = self.features
         else:
-            current_features = lag_cols + available_technical + available_sentiment
+            current_features = lag_cols + available_technical + available_derivatives + available_sentiment
 
         # Fill NaNs
         for col in available_technical:
              if col in df.columns: df[col] = df.groupby("symbol")[col].ffill().bfill()
         
-        for col in lag_cols + available_sentiment:
+        for col in lag_cols + available_derivatives + available_sentiment:
             if col in df.columns: df[col] = df[col].fillna(0.0)
 
         if not is_inference:

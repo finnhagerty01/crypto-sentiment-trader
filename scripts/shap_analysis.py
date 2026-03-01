@@ -23,6 +23,23 @@ import logging
 import numpy as np
 import pandas as pd
 import shap
+# Monkey-patch SHAP's XGBoost loader to handle XGBoost 3.x base_score format '[5E-1]'
+import builtins
+_original_float = builtins.float
+class _PatchedFloat(_original_float):
+    def __new__(cls, x=0):
+        if isinstance(x, str) and x.startswith('[') and x.endswith(']'):
+            x = x.strip('[]')
+        return _original_float.__new__(cls, x)
+# Patch only within the SHAP tree module
+_orig_xgb_loader_init = shap.explainers._tree.XGBTreeModelLoader.__init__
+def _patched_xgb_loader_init(self, xgb_model):
+    builtins.float = _PatchedFloat
+    try:
+        _orig_xgb_loader_init(self, xgb_model)
+    finally:
+        builtins.float = _original_float
+shap.explainers._tree.XGBTreeModelLoader.__init__ = _patched_xgb_loader_init
 import matplotlib
 
 matplotlib.use("Agg")  # Non-interactive backend for saving plots
@@ -97,6 +114,11 @@ def load_and_prepare_data():
     sentiment_analyzer = EnhancedSentimentAnalyzer(symbols=config.symbols)
     sentiment_df = sentiment_analyzer.analyze(reddit_data)
 
+    # Fetch derivatives data
+    logger.info("Fetching funding rates and open interest...")
+    funding_df = market_client.fetch_funding_rates(lookback_days=days_needed)
+    oi_df = market_client.fetch_open_interest(lookback_days=days_needed)
+
     # Build features via production pipeline
     logger.info("Building features via model.prepare_features()...")
     model = ImprovedTradingModel(
@@ -104,7 +126,7 @@ def load_and_prepare_data():
         exit_threshold=config.exit_threshold,
         min_confidence=config.min_confidence,
     )
-    train_df = model.prepare_features(market_df, sentiment_df, is_inference=False)
+    train_df = model.prepare_features(market_df, sentiment_df, is_inference=False, funding_df=funding_df, oi_df=oi_df)
 
     if train_df.empty:
         logger.error("Feature preparation returned empty DataFrame.")
