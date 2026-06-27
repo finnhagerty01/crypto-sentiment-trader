@@ -10,6 +10,8 @@ reports/
 # data
 data/
 !src/data/
+!rebuild/src/trader/data/
+!rebuild/src/trader/data/*
 # OS/editor
 .DS_Store
 .vscode/
@@ -18,6 +20,9 @@ models/
 logs/
 # Generated artifacts
 outputs/
+# Standalone rebuild generated artifacts
+rebuild/artifacts/*
+!rebuild/artifacts/README.md
 #Claude
 trade_bot.log
 .claude/

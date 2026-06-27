@@ -1,0 +1,31 @@
+data:
+  symbol: BTCUSDT
+  interval: 1h
+
+features:
+  volatility_window: 24
+  volume_window: 24
+  rsi_window: 14
+  clipping_window: 168
+  clipping_mad_multiplier: 8.0
+
+target:
+  horizon_bars: 1
+  volatility_multiplier: 0.10
+
+model:
+  probability_threshold: 0.55
+  regularization_c: 1.0
+
+validation:
+  minimum_train_bars: 1000
+  test_bars: 168
+  step_bars: 168
+  final_holdout_fraction: 0.20
+
+costs:
+  fee_per_side: 0.001
+  slippage_per_side: 0.0005
+
+backtest:
+  initial_capital: 10000.0

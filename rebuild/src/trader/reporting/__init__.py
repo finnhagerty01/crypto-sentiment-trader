@@ -1,0 +1,1 @@
+"""Reproducible report artifact generation."""

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "crypto-sentiment-trader-rebuild"
+version = "0.1.0"
+description = "Deterministic BTC market research and backtesting pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "joblib>=1.4",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "pyarrow>=18.0",
+    "pyyaml>=6.0",
+    "scikit-learn>=1.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+crypto-trader = "trader.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trader"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
