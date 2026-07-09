@@ -2,17 +2,18 @@
 
 ## Current phase
 
-Phase 03 is complete. Phase 04 is next.
+Phase 04 is complete. Phase 05 is next.
 
 ## Completed phases
 
 - Phase 02: Baseline and safety.
 - Phase 03: Package scaffold and configuration.
+- Phase 04: Market data pipeline.
 
 ## Current verification status
 
 - Legacy suite observed on June 27, 2026: `270 passed, 57 failed, 246 warnings`.
-- Replacement suite: `26 passed`.
+- Replacement suite: `42 passed`.
 - `rebuild/` is an isolated Python project with independent pytest discovery.
 
 ## Decisions
@@ -205,6 +206,86 @@ Do not modify or delete without explicit instruction:
 ### Recommended next phase
 
 - `04_MARKET_DATA_PIPELINE.md`
+
+## 2026-07-08 — Phase 04
+
+### Completed
+
+- Added canonical BTCUSDT 1h OHLCV schema validation and normalization.
+- Added deterministic Parquet storage with JSON metadata sidecars and content
+  hashing.
+- Added an explicit Binance US spot kline collector with bounded retries,
+  timeouts, explicit start/end dates, incomplete-candle filtering, and an
+  injectable fake-client boundary for tests.
+- Wired `crypto-trader collect-market` to save versioned raw datasets under
+  the requested output directory.
+- Added a small deterministic BTCUSDT 1h CSV fixture and offline unit and
+  integration coverage for schema validation, collection, storage, metadata,
+  and CLI wiring.
+
+### Files changed
+
+- `rebuild/src/trader/cli.py`
+- `rebuild/src/trader/data/schemas.py`
+- `rebuild/src/trader/data/storage.py`
+- `rebuild/src/trader/data/market.py`
+- `.gitignore`
+- `rebuild/tests/fixtures/btcusdt_1h.csv`
+- `rebuild/tests/unit/test_cli.py`
+- `rebuild/tests/unit/data/test_schemas.py`
+- `rebuild/tests/unit/data/test_storage.py`
+- `rebuild/tests/unit/data/test_market.py`
+- `rebuild/tests/integration/test_market_fixture_storage.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit
+  tests/integration` from `rebuild/`: initially failed because the new schema
+  tests assigned numeric invalid values into Arrow-backed string columns before
+  validation ran; fixed the test inputs to use string payloads.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit
+  tests/integration` from `rebuild/`: passed, `42 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `42 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader --help` from
+  `rebuild/`: passed and listed `collect-market` plus the future placeholder
+  commands.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader collect-market
+  --help` from `rebuild/`: passed and showed required explicit `--start` and
+  `--end` options.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check`: passed.
+
+### Decisions
+
+- The documented baseline data source is Binance US spot klines via
+  `https://api.binance.us/api/v3/klines`; no futures, derivatives, Reddit, or
+  root server artifacts are used.
+- `collect-market` is the only implemented command that may contact an
+  external market API. All default tests remain offline and use fake clients or
+  local fixtures.
+- Public market-data APIs added for later phases are
+  `trader.data.schemas.normalize_ohlcv`,
+  `trader.data.storage.write_market_dataset`,
+  `trader.data.storage.read_market_dataset`,
+  `trader.data.storage.build_metadata`,
+  `trader.data.storage.content_hash`, and
+  `trader.data.market.collect_market_data`.
+- Metadata sidecars are written as `<dataset>.parquet.metadata.json` and
+  include symbol, interval, row count, UTC date range, schema version, source,
+  and deterministic content hash.
+
+### Remaining blockers
+
+- None for Phase 04.
+- Feature engineering, noise handling, and target generation remain
+  intentionally deferred to Phase 05.
+
+### Recommended next phase
+
+- `05_FEATURES_NOISE_AND_TARGET.md`
 
 ## Update template
 

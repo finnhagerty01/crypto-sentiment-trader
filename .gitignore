@@ -12,6 +12,8 @@ data/
 !src/data/
 !rebuild/src/trader/data/
 !rebuild/src/trader/data/*
+!rebuild/tests/unit/data/
+!rebuild/tests/unit/data/*
 # OS/editor
 .DS_Store
 .vscode/
