@@ -2,18 +2,19 @@
 
 ## Current phase
 
-Phase 04 is complete. Phase 05 is next.
+Phase 05 is complete. Phase 06 is next.
 
 ## Completed phases
 
 - Phase 02: Baseline and safety.
 - Phase 03: Package scaffold and configuration.
 - Phase 04: Market data pipeline.
+- Phase 05: Features, noise handling, and target.
 
 ## Current verification status
 
 - Legacy suite observed on June 27, 2026: `270 passed, 57 failed, 246 warnings`.
-- Replacement suite: `42 passed`.
+- Replacement suite: `55 passed`.
 - `rebuild/` is an isolated Python project with independent pytest discovery.
 
 ## Decisions
@@ -286,6 +287,73 @@ Do not modify or delete without explicit instruction:
 ### Recommended next phase
 
 - `05_FEATURES_NOISE_AND_TARGET.md`
+
+## 2026-07-10 — Phase 05
+
+### Completed
+
+- Added causal BTCUSDT market feature generation for the six required
+  baseline features while preserving execution OHLCV columns.
+- Added explicit raw feature, clipped feature, missingness flag, execution,
+  and model-feature column lists.
+- Added causal rolling median/MAD clipping that shifts statistics by one bar
+  so the current observation never sets its own clipping threshold.
+- Added missingness flags captured before any later imputation step.
+- Added volatility and cost aware `next_return`, `noise_band`, and nullable
+  binary `target` construction.
+- Added one pure dataset builder that performs feature, noise, and target
+  construction without fetching or writing data.
+- Added unit coverage for hand-calculated returns, RSI warm-up and bounds,
+  constant-volume behavior, realized-volatility units, future-mutation
+  leakage checks, current-extreme clipping behavior, target cost/volatility
+  behavior, model-feature list safety, and deterministic output.
+
+### Files changed
+
+- `rebuild/src/trader/features/market.py`
+- `rebuild/src/trader/features/noise.py`
+- `rebuild/src/trader/features/target.py`
+- `rebuild/tests/unit/features/test_market_features.py`
+- `rebuild/tests/unit/features/test_noise.py`
+- `rebuild/tests/unit/features/test_target.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/features`
+  from `rebuild/`: passed, `13 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `55 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit
+  tests/integration` from `rebuild/`: passed, `55 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check`: passed.
+
+### Decisions
+
+- `realized_volatility_24h` is the hourly standard deviation of trailing
+  one-hour returns over the configured volatility window. It is not annualized
+  and is not horizon-scaled.
+- Model features are the clipped versions of the six raw market features plus
+  their missingness flags. Raw OHLCV, `next_return`, `noise_band`, and
+  `target` are excluded from `MODEL_FEATURE_COLUMNS`.
+- Rolling median/MAD clipping uses a complete prior window. During warm-up, or
+  when prior MAD is zero or unavailable, values are left unchanged rather than
+  producing infinite or global-statistic limits.
+- Rows without a future close or without a volatility estimate retain
+  `target` as nullable `NA` so training can exclude them while inference rows
+  remain present.
+
+### Remaining blockers
+
+- None for Phase 05.
+- Model training and chronological validation remain intentionally deferred to
+  Phase 06.
+
+### Recommended next phase
+
+- `06_MODEL_AND_VALIDATION.md`
 
 ## Update template
 
