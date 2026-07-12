@@ -2,7 +2,7 @@
 
 ## Current phase
 
-Phase 05 is complete. Phase 06 is next.
+Phase 07 is complete. Phase 08 is next.
 
 ## Completed phases
 
@@ -10,11 +10,13 @@ Phase 05 is complete. Phase 06 is next.
 - Phase 03: Package scaffold and configuration.
 - Phase 04: Market data pipeline.
 - Phase 05: Features, noise handling, and target.
+- Phase 06: Model and chronological validation.
+- Phase 07: Backtest and reporting.
 
 ## Current verification status
 
 - Legacy suite observed on June 27, 2026: `270 passed, 57 failed, 246 warnings`.
-- Replacement suite: `55 passed`.
+- Replacement suite: `80 passed`.
 - `rebuild/` is an isolated Python project with independent pytest discovery.
 
 ## Decisions
@@ -354,6 +356,155 @@ Do not modify or delete without explicit instruction:
 ### Recommended next phase
 
 - `06_MODEL_AND_VALIDATION.md`
+
+## 2026-07-11 — Phase 06
+
+### Completed
+
+- Added the market-only Logistic Regression baseline as a scikit-learn
+  pipeline with median imputation, `StandardScaler`, and a deterministic
+  classifier.
+- Added positive-class probability prediction, threshold-based binary signal
+  generation, exposed feature names, fitted scaler diagnostics, and model
+  metadata.
+- Added final-holdout splitting and expanding walk-forward validation that
+  reserves the configured holdout before producing development folds.
+- Added per-fold classification metrics, probability diagnostics, class counts,
+  and explicit single-class fold handling.
+- Added joblib model persistence with JSON metadata sidecars and exact feature
+  compatibility checks on load.
+- Added offline unit coverage for chronological isolation, holdout exclusion,
+  per-fold scaler fitting, deterministic training, bounded probabilities,
+  single-class handling, artifact round trips, and feature-order rejection.
+
+### Files changed
+
+- `rebuild/src/trader/modeling/baseline.py`
+- `rebuild/src/trader/modeling/validation.py`
+- `rebuild/src/trader/modeling/artifacts.py`
+- `rebuild/tests/unit/modeling/__init__.py`
+- `rebuild/tests/unit/modeling/testing_data.py`
+- `rebuild/tests/unit/modeling/test_baseline.py`
+- `rebuild/tests/unit/modeling/test_validation.py`
+- `rebuild/tests/unit/modeling/test_artifacts.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/modeling`
+  from `rebuild/`: passed, `14 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `69 passed, 8 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit
+  tests/integration` from `rebuild/`: passed, `69 passed, 8 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check`: passed.
+
+### Decisions
+
+- Imputation is included because Phase 05 model features can contain warm-up
+  missing values; the imputer is inside the saved sklearn pipeline so fitted
+  preprocessing travels with the model.
+- The baseline uses `LogisticRegression(C=config.model.regularization_c,
+  solver="liblinear", random_state=42, max_iter=1000)` with default L2
+  regularization.
+- Artifact loading validates the exact saved feature name order against the
+  caller's expected feature contract. Prediction input frames are selected by
+  canonical feature names so Phase 05 datasets do not need to store columns in
+  model order.
+- Walk-forward validation reports fold metrics only. It does not use holdout
+  results and does not optimize any parameters.
+- Single-class training windows are skipped by default during walk-forward
+  validation with an explicit reason, and can be configured to fail.
+
+### Remaining blockers
+
+- None for Phase 06.
+- Backtest simulation, benchmarks, and reporting remain intentionally deferred
+  to Phase 07.
+
+### Recommended next phase
+
+- `07_BACKTEST_AND_REPORTING.md`
+
+## 2026-07-12 — Phase 07
+
+### Completed
+
+- Added a transparent long-or-cash BTC backtest engine with next-bar
+  execution, one position or cash, no shorting, explicit per-side fee and
+  slippage accounting, no final-bar signal fill, and force-close accounting at
+  the final close.
+- Added strategy metrics for total return, conditional annualized return,
+  max drawdown, hourly Sharpe ratio, trade count, win rate, average trade
+  return, profit factor without infinities, turnover, fees, slippage, and
+  exposure.
+- Added comparable cash, buy-and-hold, and causal momentum benchmarks over the
+  same market period and cost assumptions.
+- Added a deterministic report writer that creates the required versioned
+  artifact directory with config, dataset metadata, model metadata, fold
+  metrics, predictions, trades, equity, metrics, benchmark metrics, and
+  summary files.
+- Added offline unit coverage for next-bar fills, hand-verifiable costs, no
+  shorting, non-negative cash, final accounting, final-bar signal ignoring,
+  drawdown, zero-trade metrics, no-loss profit factor handling, benchmark
+  period alignment, and deterministic report output.
+
+### Files changed
+
+- `rebuild/src/trader/backtest/engine.py`
+- `rebuild/src/trader/backtest/metrics.py`
+- `rebuild/src/trader/backtest/benchmarks.py`
+- `rebuild/src/trader/reporting/writer.py`
+- `rebuild/tests/unit/backtest/test_engine.py`
+- `rebuild/tests/unit/backtest/test_metrics.py`
+- `rebuild/tests/unit/backtest/test_benchmarks.py`
+- `rebuild/tests/unit/reporting/test_writer.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/backtest
+  tests/unit/reporting` from `rebuild/`: passed, `11 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit
+  tests/integration` from `rebuild/`: passed, `80 passed, 8 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `80 passed, 8 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check`: passed.
+
+### Decisions
+
+- A buy signal at bar `t` fills at bar `t+1` open with the fill price
+  increased by slippage; a sell signal fills at bar `t+1` open with the fill
+  price reduced by slippage.
+- Entry uses all available cash after reserving the entry fee, so cash does
+  not go negative. Exits liquidate the full BTC quantity and return to cash.
+- Equity while long is marked as conservative liquidation value after sell-side
+  slippage and fee. The final open position is force-closed at the final bar's
+  close using the same sell-side cost rule.
+- The annualized return is reported only for periods of at least 24 hours.
+  Hourly Sharpe uses `365.25 * 24` periods per year and returns `None` for
+  zero-variance or undersized return series.
+- Profit factor returns `None` when there are no closed trades or no losing
+  closed trades, avoiding misleading infinite values.
+- The momentum benchmark is explicitly causal: it is long only when the
+  trailing close-to-close return over the configured lookback is positive, and
+  it shares the same next-bar execution engine and costs as the strategy.
+- Report writing is deterministic for a caller-supplied `run_id`; no timestamp
+  or random identifier is injected by the writer.
+
+### Remaining blockers
+
+- None for Phase 07.
+- CLI wiring and a reproducible end-to-end run remain intentionally deferred to
+  Phase 08.
+
+### Recommended next phase
+
+- `08_CLI_AND_REPRODUCIBLE_RUN.md`
 
 ## Update template
 

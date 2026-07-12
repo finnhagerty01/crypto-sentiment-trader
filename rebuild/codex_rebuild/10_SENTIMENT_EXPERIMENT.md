@@ -12,7 +12,9 @@ Start only when:
 
 ## Objective
 
-Determine whether Reddit sentiment provides incremental out-of-sample value. Do not treat sentiment as a required production feature.
+Determine whether Reddit sentiment from submissions and comments provides
+incremental out-of-sample value. Do not treat sentiment as a required production
+feature.
 
 ## Required structure
 
@@ -34,6 +36,38 @@ experiments.py
 
 Do not restore dependencies on legacy sentiment modules.
 
+## Reddit ingestion scope
+
+The sentiment experiment must explicitly ingest both Reddit submissions and
+comments. Do not repeat the legacy behavior where only submissions are collected
+while comment activity is represented only by `num_comments`.
+
+Requirements:
+
+- Collect submissions from configured subreddits.
+- Collect comments associated with collected submissions.
+- Store submissions and comments as separate raw datasets or separate tables in
+  the same versioned dataset.
+- Preserve stable Reddit IDs and parent relationships:
+  - submission ID;
+  - comment ID;
+  - comment parent ID;
+  - subreddit;
+  - created UTC timestamp.
+- Preserve engagement fields separately from sentiment fields:
+  - submission score;
+  - submission `num_comments`;
+  - comment score;
+  - optional author metadata when available and safe to store.
+- Bound comment collection with explicit configuration such as maximum comments
+  per submission, maximum comment depth, and timeout/retry limits.
+- Make comment collection deterministic for tests by using local fixtures and
+  fake clients.
+- Record whether a submission has zero comments, comments were intentionally
+  capped, comments failed to collect, or comments were not requested.
+- Do not silently collapse post text and comment text into one raw field; any
+  combined text used for scoring must be derived from preserved raw records.
+
 ## Experiment order
 
 Run one isolated addition at a time:
@@ -52,9 +86,14 @@ Do not add all features in one run.
 ## Data correctness requirements
 
 - Preserve Reddit upvote score separately from sentiment score.
-- Track post count and subreddit count.
+- Track post count, comment count, and subreddit count.
+- Track submission-derived sentiment and comment-derived sentiment separately
+  before testing any combined sentiment feature.
 - Distinguish no matching posts from collection failure.
-- Save raw posts and derived hourly sentiment as separate versioned datasets.
+- Distinguish submissions with no comments from comment collection failure or
+  configured comment caps.
+- Save raw submissions, raw comments, and derived hourly sentiment as separate
+  versioned datasets.
 - Record collection timestamps and source.
 - Tests must use local fixtures.
 - Do not use future engagement values for historical predictions.
