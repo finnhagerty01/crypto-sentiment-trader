@@ -22,6 +22,9 @@ models/
 logs/
 # Generated artifacts
 outputs/
+master_reddit_server.csv
+reddit_archive_server.csv
+trade_logs_server.log
 # Standalone rebuild generated artifacts
 rebuild/artifacts/*
 !rebuild/artifacts/README.md

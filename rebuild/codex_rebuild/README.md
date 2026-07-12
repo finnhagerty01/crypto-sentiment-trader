@@ -7,7 +7,7 @@ The files in this directory are ordered work packages for separate Codex session
 ## Suggested prompt for a new Codex instance
 
 ```text
-Implement Phase NN from docs/codex_rebuild/NN_PHASE_NAME.md.
+Implement Phase NN from rebuild/codex_rebuild/NN_PHASE_NAME.md.
 
 Before editing, read:
 - docs/codex_rebuild/00_MASTER_PLAN.md

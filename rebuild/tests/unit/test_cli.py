@@ -17,15 +17,16 @@ def test_help_succeeds(capsys: pytest.CaptureFixture[str]) -> None:
     assert "collect-market" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("command", COMMANDS[1:])
-def test_placeholder_commands_fail_clearly(
-    command: str, capsys: pytest.CaptureFixture[str]
+def test_all_phase_08_commands_are_listed_in_help(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main([command]) == 2
-    assert (
-        capsys.readouterr().err
-        == f"error: command '{command}' is not implemented in the current phase\n"
-    )
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--help"])
+
+    assert exit_info.value.code == 0
+    output = capsys.readouterr().out
+    for command in COMMANDS:
+        assert command in output
 
 
 def test_collect_market_writes_dataset_offline(

@@ -2,7 +2,7 @@
 
 ## Current phase
 
-Phase 07 is complete. Phase 08 is next.
+Phase 08 is complete. Phase 09 is next.
 
 ## Completed phases
 
@@ -12,11 +12,12 @@ Phase 07 is complete. Phase 08 is next.
 - Phase 05: Features, noise handling, and target.
 - Phase 06: Model and chronological validation.
 - Phase 07: Backtest and reporting.
+- Phase 08: CLI and reproducible baseline run.
 
 ## Current verification status
 
 - Legacy suite observed on June 27, 2026: `270 passed, 57 failed, 246 warnings`.
-- Replacement suite: `80 passed`.
+- Replacement suite: `78 passed`.
 - `rebuild/` is an isolated Python project with independent pytest discovery.
 
 ## Decisions
@@ -505,6 +506,77 @@ Do not modify or delete without explicit instruction:
 ### Recommended next phase
 
 - `08_CLI_AND_REPRODUCIBLE_RUN.md`
+
+## 2026-07-12 — Phase 08
+
+### Completed
+
+- Wired `build-dataset`, `train`, `backtest`, and `run-baseline` to the
+  completed Phase 04-07 components.
+- Added a small workflow orchestration module that writes feature datasets,
+  model artifacts, report bundles, metadata sidecars, and config copies.
+- Preserved `collect-market` as the only implemented command that may fetch
+  external data; `run-baseline` starts from an already saved market dataset.
+- Added artifact overwrite checks for generated feature datasets, models, and
+  report directories.
+- Added concise metric comparison output for `backtest` and `run-baseline`.
+- Rewrote the root README around the rebuild workflow, test commands, real
+  collection command, offline fixture verification, artifact layout, and the
+  explicit live-trading disablement.
+- Added an offline integration test that creates a deterministic saved market
+  dataset from the BTC fixture in a temporary directory, runs the public
+  `run-baseline` CLI twice, verifies dataset/model/report artifacts, reads
+  predictions/metrics/benchmark files, checks deterministic predictions and
+  metrics, and asserts no collection path is used.
+
+### Files changed
+
+- `README.md`
+- `rebuild/src/trader/cli.py`
+- `rebuild/src/trader/workflow.py`
+- `rebuild/tests/unit/test_cli.py`
+- `rebuild/tests/integration/test_offline_baseline_workflow.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/test_cli.py
+  tests/integration/test_offline_baseline_workflow.py` from `rebuild/`:
+  passed, `4 passed, 16 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `78 passed, 24 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit
+  tests/integration` from `rebuild/`: passed, `78 passed, 24 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check`: passed.
+
+### Decisions
+
+- Feature dataset filenames and model filenames include the feature dataset
+  content hash prefix. Re-running into the same output directory fails clearly
+  instead of overwriting.
+- Report directories use an explicit `--run-id` when supplied; otherwise the
+  CLI-generated run id includes feature hash, model metadata hash, and UTC
+  creation time. Existing report directories are rejected before writing.
+- Feature datasets store a deterministic metadata sidecar with raw dataset
+  metadata, raw content hash, feature content hash, target definition, model
+  feature columns, labeled row count, and configuration hash.
+- The final saved model is trained on the development split only. The final
+  holdout remains reserved for `backtest`.
+- The offline integration test expands the tiny six-row fixture
+  deterministically in a temporary directory so the model can train with both
+  target classes while still using no network, credentials, or mutable data.
+
+### Remaining blockers
+
+- None for Phase 08.
+- Legacy quarantine and dependency cleanup remain intentionally deferred to
+  Phase 09.
+
+### Recommended next phase
+
+- `09_LEGACY_QUARANTINE_AND_DOCS.md`
 
 ## Update template
 
