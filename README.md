@@ -2,7 +2,8 @@
 
 Deterministic research project for testing a small BTCUSDT market-only trading baseline. This repository is experimental software and is not financial advice.
 
-The active rebuild lives under `rebuild/`. The repository-root application is legacy reference material until the final quarantine phase is complete.
+The active rebuild lives under `rebuild/`. The repository-root application has
+been quarantined under `legacy/` as historical reference material.
 
 ## Supported Baseline
 
@@ -36,7 +37,9 @@ Run the replacement suite from `rebuild/`:
 UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests
 ```
 
-The legacy root suite is separate and currently has known failures documented in `docs/12_REPOSITORY_REVIEW_AND_SIMPLIFICATION.md`.
+The quarantined legacy root suite is retained under `legacy/runtime/tests/`
+for reference and has known failures documented in
+`docs/12_REPOSITORY_REVIEW_AND_SIMPLIFICATION.md`.
 
 ## Offline Demo
 
@@ -112,6 +115,7 @@ Commands refuse to overwrite existing artifact paths.
 See:
 
 - `docs/12_REPOSITORY_REVIEW_AND_SIMPLIFICATION.md`
+- `legacy/README.md`
 - `rebuild/codex_rebuild/00_MASTER_PLAN.md`
 - `rebuild/codex_rebuild/01_TARGET_ARCHITECTURE.md`
 - `rebuild/codex_rebuild/HANDOFF.md`

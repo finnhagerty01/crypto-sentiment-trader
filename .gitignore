@@ -4,12 +4,14 @@ __pycache__/
 .venv/
 .conda/
 .env
+.env.*
+!.env.example
+# generated legacy/root outputs
 reports/
 # notebooks
 .ipynb_checkpoints/
 # data
 data/
-!src/data/
 !rebuild/src/trader/data/
 !rebuild/src/trader/data/*
 !rebuild/tests/unit/data/
@@ -18,16 +20,20 @@ data/
 .DS_Store
 .vscode/
 models/
-!src/models/
 logs/
 # Generated artifacts
 outputs/
 master_reddit_server.csv
 reddit_archive_server.csv
 trade_logs_server.log
+*.log
 # Standalone rebuild generated artifacts
 rebuild/artifacts/*
 !rebuild/artifacts/README.md
+rebuild/artifacts/datasets/*
+rebuild/artifacts/models/*
+rebuild/artifacts/backtests/*
+rebuild/artifacts/paper_state/*
 #Claude
 trade_bot.log
 .claude/

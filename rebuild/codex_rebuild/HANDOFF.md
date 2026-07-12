@@ -2,7 +2,7 @@
 
 ## Current phase
 
-Phase 08 is complete. Phase 09 is next.
+Phase 09 is complete. Phase 10 is next, but remains gated future sentiment work.
 
 ## Completed phases
 
@@ -13,12 +13,15 @@ Phase 08 is complete. Phase 09 is next.
 - Phase 06: Model and chronological validation.
 - Phase 07: Backtest and reporting.
 - Phase 08: CLI and reproducible baseline run.
+- Phase 09: Legacy quarantine and dependency reduction.
 
 ## Current verification status
 
 - Legacy suite observed on June 27, 2026: `270 passed, 57 failed, 246 warnings`.
 - Replacement suite: `78 passed`.
 - `rebuild/` is an isolated Python project with independent pytest discovery.
+- Default rebuild installation excludes Reddit, transformer, tree-model,
+  plotting, and research dependencies.
 
 ## Decisions
 
@@ -577,6 +580,90 @@ Do not modify or delete without explicit instruction:
 ### Recommended next phase
 
 - `09_LEGACY_QUARANTINE_AND_DOCS.md`
+
+## 2026-07-12 — Phase 09
+
+### Completed
+
+- Quarantined the tracked legacy runtime under `legacy/runtime/`, including
+  the former root `main.py`, root `src/`, root tests, legacy config, and
+  stale dependency manifests.
+- Moved tracked legacy research scripts under `legacy/scripts/`.
+- Moved old strategy documentation under `legacy/docs/`, while keeping
+  `docs/12_REPOSITORY_REVIEW_AND_SIMPLIFICATION.md` active.
+- Added `legacy/README.md` with a historical-status banner and an inventory
+  classifying legacy modules as superseded, future experiment, data migration
+  utility, or historical documentation.
+- Replaced root `main.py` with a dependency-free refusal message that directs
+  users to `crypto-trader` in `rebuild/`.
+- Updated the root README to state that the rebuild is active and legacy files
+  are quarantined.
+- Removed root `pyproject.toml`, root `uv.lock`, and root `requirements.txt`
+  from the active path by moving them into legacy reference.
+- Added optional rebuild dependency extras for deferred `sentiment` and
+  `research` work while keeping core dependencies limited to the market-only
+  baseline.
+- Tightened `.gitignore` coverage for generated artifacts, logs, local
+  credentials, rebuild datasets, rebuild models, rebuild backtests, and paper
+  state.
+- Preserved untracked server artifacts in place:
+  `master_reddit_server.csv`, `reddit_archive_server.csv`, and
+  `trade_logs_server.log`.
+
+### Files changed
+
+- `.gitignore`
+- `README.md`
+- `main.py`
+- `docs/`
+- `legacy/`
+- `rebuild/pyproject.toml`
+- `rebuild/uv.lock`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `rg -n "(from|import) (src|analysis|models|features|risk|execution)|src\\.analysis|src\\.models|src\\.features|src\\.risk|src\\.execution" rebuild/src/trader rebuild/tests rebuild/configs README.md docs/12_REPOSITORY_REVIEW_AND_SIMPLIFICATION.md`: passed; no legacy imports in rebuild.
+- `python3 - <<'PY' ... tomllib.loads(Path('rebuild/pyproject.toml').read_text()) ... PY`: passed; default dependencies are only `joblib`, `numpy`, `pandas`, `pyarrow`, `pyyaml`, and `scikit-learn`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit tests/integration` from `rebuild/`: first sandboxed attempt failed on blocked DNS while resolving packages after metadata changed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit tests/integration` from `rebuild/` with approved network access: passed, `78 passed, 24 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from `rebuild/`: passed, `78 passed, 24 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader run-baseline ... --dataset-output-dir ...`: expected CLI usage failure because the actual Phase 08 option names are `--dataset-dir`, `--model-dir`, and `--report-dir`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader run-baseline --config configs/baseline.yaml --market-data /tmp/crypto_phase09_baseline/btcusdt_1h_phase09_raw.parquet --dataset-dir /tmp/crypto_phase09_baseline/datasets --model-dir /tmp/crypto_phase09_baseline/models --report-dir /tmp/crypto_phase09_baseline/backtests --run-id phase09-baseline` from `rebuild/`: passed; saved feature dataset, model artifact, and report bundle under `/tmp/crypto_phase09_baseline/`.
+- `python3 ../main.py` from `rebuild/`: expected failure status `2` with the quarantine message and rebuild CLI instructions.
+- `UV_CACHE_DIR=/tmp/uv-cache uv sync --no-dev --no-default-groups --locked` from `rebuild/`: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv pip list --python .venv/bin/python` from `rebuild/`: passed; core environment contains the rebuild package, `joblib`, `numpy`, `pandas`, `pyarrow`, `pyyaml`, `scikit-learn`, and their transitive dependencies only.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --no-dev --no-default-groups --locked python -c "..."` from `rebuild/`: passed; `torch`, `transformers`, `xgboost`, `lightgbm`, `optuna`, `shap`, `streamlit`, `plotly`, `praw`, and `vaderSentiment` were not importable in the core environment.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: first sandboxed attempt failed on blocked DNS while reinstalling
+  `pygments` for the dev extra after the core-only install check; rerun with
+  approved network access passed, `78 passed, 24 warnings`.
+- Final `git diff --check`: passed.
+
+### Decisions
+
+- Quarantine was chosen over deleting legacy code so historical behavior and
+  migration references remain available without being mistaken for the active
+  system.
+- Root `main.py` is intentionally non-operational; running it must not import
+  Reddit, Binance, or legacy model code.
+- Root dependency manifests are legacy reference only. The active source of
+  truth for installation is `rebuild/pyproject.toml`.
+- Future Reddit/VADER sentiment dependencies live in the `sentiment` optional
+  extra. Research-heavy plotting, tuning, transformer, SHAP, and tree-model
+  dependencies live in the `research` optional extra.
+- The ignored, untracked root `archive/` utilities and generated data/log
+  files were left untouched.
+
+### Remaining blockers
+
+- None for Phase 09.
+- Phase 10 sentiment work should not start until the market-only baseline is
+  accepted and its entry criteria are confirmed.
+
+### Recommended next phase
+
+- `10_SENTIMENT_EXPERIMENT.md` only after its gates are satisfied.
 
 ## Update template
 

@@ -21,6 +21,22 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+sentiment = [
+    "langdetect>=1.0",
+    "praw>=7.8",
+    "vadersentiment>=3.3",
+]
+research = [
+    "lightgbm>=4.0",
+    "optuna>=4.0",
+    "plotly>=6.0",
+    "seaborn>=0.13",
+    "shap>=0.49",
+    "streamlit>=1.50",
+    "torch>=2.0",
+    "transformers>=5.0",
+    "xgboost>=3.0",
+]
 
 [project.scripts]
 crypto-trader = "trader.cli:main"
