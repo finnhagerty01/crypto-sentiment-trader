@@ -41,4 +41,13 @@ Do not begin the next phase. All implementation work belongs under rebuild/.
 | 10 | `10_SENTIMENT_EXPERIMENT.md` | Accepted market-only baseline and explicit user request |
 | 11 | `11_PAPER_TRADING_GATE.md` | Stable model artifacts and explicit user request |
 
+## Model refinement track
+
+If the market-only baseline is reproducible but does not produce meaningful
+long/cash signal, use `model_refinement/` before Phase 11. That track is not a
+numbered rebuild phase; it is a controlled research module for threshold,
+target, horizon, feature-group, orchestration, and sentiment re-evaluation
+work. Phase 11 remains blocked until model refinement produces a candidate
+worth paper trading.
+
 Do not ask an instance to implement multiple phases unless the earlier phase is already complete and its acceptance criteria are recorded in `HANDOFF.md`.

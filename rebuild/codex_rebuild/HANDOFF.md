@@ -2,7 +2,8 @@
 
 ## Current phase
 
-Phase 09 is complete. Phase 10 is next, but remains gated future sentiment work.
+Phase 10 is complete. Model refinement is next. Phase 11 remains gated future
+paper-trading work.
 
 ## Completed phases
 
@@ -14,11 +15,12 @@ Phase 09 is complete. Phase 10 is next, but remains gated future sentiment work.
 - Phase 07: Backtest and reporting.
 - Phase 08: CLI and reproducible baseline run.
 - Phase 09: Legacy quarantine and dependency reduction.
+- Phase 10: Gated sentiment experiment scaffolding.
 
 ## Current verification status
 
 - Legacy suite observed on June 27, 2026: `270 passed, 57 failed, 246 warnings`.
-- Replacement suite: `78 passed`.
+- Replacement suite: `88 passed`.
 - `rebuild/` is an isolated Python project with independent pytest discovery.
 - Default rebuild installation excludes Reddit, transformer, tree-model,
   plotting, and research dependencies.
@@ -31,6 +33,11 @@ Phase 09 is complete. Phase 10 is next, but remains gated future sentiment work.
 - Core model is Logistic Regression.
 - Core evaluation is chronological and long-or-cash.
 - EWMA/Kalman sentiment work is deferred until the market-only baseline is accepted.
+- Sentiment work is an isolated experiment package and is not part of the
+  default market-only CLI path.
+- Model refinement lives under `rebuild/codex_rebuild/model_refinement/` and
+  must run before Phase 11 unless the user explicitly accepts the current model
+  as paper-trading ready.
 
 ## User-owned and untracked files
 
@@ -664,6 +671,154 @@ Do not modify or delete without explicit instruction:
 ### Recommended next phase
 
 - `10_SENTIMENT_EXPERIMENT.md` only after its gates are satisfied.
+
+## 2026-07-12 — Phase 10
+
+### Completed
+
+- Added a gated sentiment experiment package under
+  `rebuild/src/trader/sentiment/` without changing the market-only CLI.
+- Added fake-client-friendly Reddit collection for submissions and bounded
+  comments with stable IDs, parent relationships, UTC timestamps, engagement
+  fields, collection source, and explicit comment collection statuses.
+- Added versioned raw sentiment storage that saves submissions and comments as
+  separate Parquet tables with metadata and content hashes.
+- Added separate versioned storage for derived hourly sentiment datasets.
+- Added optional VADER scoring behind the existing `sentiment` extra, plus a
+  deterministic lexical scorer for offline tests.
+- Added scoring that preserves Reddit upvote/comment engagement fields
+  separately from `sentiment_score`.
+- Added causal hourly sentiment features for the required ablation order:
+  hourly mean, counts/missingness, reliability shrinkage, 6-hour EWMA, 24-hour
+  EWMA, fast-minus-slow EWMA, one-hour lag, and one-dimensional Kalman
+  filtering.
+- Added an ablation runner that compares market-only against cumulative
+  sentiment variants while reusing the same feature dataset, chronological
+  folds, Logistic Regression model class, threshold, costs, and long-or-cash
+  backtest behavior.
+- Added offline unit coverage for collection status handling, separate
+  submission/comment records, engagement preservation, causal transforms,
+  storage round trips, and ablation table structure.
+
+### Files changed
+
+- `rebuild/src/trader/sentiment/__init__.py`
+- `rebuild/src/trader/sentiment/collector.py`
+- `rebuild/src/trader/sentiment/storage.py`
+- `rebuild/src/trader/sentiment/scoring.py`
+- `rebuild/src/trader/sentiment/features.py`
+- `rebuild/src/trader/sentiment/experiments.py`
+- `rebuild/tests/unit/sentiment/test_collector.py`
+- `rebuild/tests/unit/sentiment/test_scoring_features.py`
+- `rebuild/tests/unit/sentiment/test_storage_experiments.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/sentiment`
+  from `rebuild/`: first failed on an invalid `Protocol` import from
+  `collections.abc`; fixed by importing `Protocol` from `typing`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/sentiment`
+  from `rebuild/`: then failed because a new test imported
+  `tests.unit.modeling.testing_data` through a non-package test root; fixed by
+  making the sentiment ablation test self-contained.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/sentiment`
+  from `rebuild/`: passed, `9 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `87 passed, 24 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check`: passed.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/sentiment` from `rebuild/`: passed, `10 passed`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `88 passed, 24 warnings`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit
+  tests/integration` from `rebuild/`: passed, `88 passed, 24 warnings`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall
+  -q src/trader` from `rebuild/`: passed.
+- Final `git diff --check`: passed.
+
+### Decisions
+
+- Sentiment remains outside the default CLI and workflow; Phase 10 exposes
+  experiment APIs only.
+- The Reddit client boundary is a small protocol so tests can use local
+  fixtures and optional PRAW integration can be added later without import-time
+  side effects.
+- VADER is optional and imported only when `VaderSentimentScorer` is
+  constructed, preserving the core dependency boundary.
+- Raw submission text and raw comment text are preserved separately. Any
+  combined sentiment is derived from scored records, not stored as the only raw
+  representation.
+- Missing sentiment hours are explicit: count features are zero, raw hourly
+  mean sentiment remains missing, and downstream causal transforms use a
+  neutral filled observation.
+- Kalman support is filtering only, one-dimensional, and causal. The API
+  exposes fixed variance parameters so future experiments can choose them on
+  development data before holdout evaluation.
+
+### Remaining blockers
+
+- No real Reddit adapter, CLI command, or production workflow integration was
+  added in Phase 10.
+- No live sentiment experiment has been run against collected Reddit data, so
+  the conclusion remains unset; the valid eventual conclusion may be
+  “sentiment does not help.”
+- Phase 11 paper trading remains gated and must not start until its own entry
+  criteria are explicitly satisfied.
+
+### Recommended next phase
+
+- `11_PAPER_TRADING_GATE.md` only after its gates are satisfied.
+
+## 2026-07-12 — Model refinement planning module
+
+### Completed
+
+- Added a separate `model_refinement/` planning track under
+  `rebuild/codex_rebuild/`.
+- Documented that model refinement is not Phase 11 and does not begin paper
+  trading.
+- Added scoped work packages for threshold diagnostics, target/horizon
+  experiments, market feature groups, experiment orchestration, and sentiment
+  re-evaluation.
+- Updated the rebuild instruction README to direct weak-signal market-only
+  work into the model refinement track before Phase 11.
+
+### Files changed
+
+- `rebuild/codex_rebuild/README.md`
+- `rebuild/codex_rebuild/HANDOFF.md`
+- `rebuild/codex_rebuild/model_refinement/README.md`
+- `rebuild/codex_rebuild/model_refinement/01_THRESHOLD_SWEEP_AND_DIAGNOSTICS.md`
+- `rebuild/codex_rebuild/model_refinement/02_TARGET_AND_HORIZON_EXPERIMENTS.md`
+- `rebuild/codex_rebuild/model_refinement/03_MARKET_FEATURE_GROUPS.md`
+- `rebuild/codex_rebuild/model_refinement/04_EXPERIMENT_ORCHESTRATION.md`
+- `rebuild/codex_rebuild/model_refinement/05_SENTIMENT_REEVALUATION_GATE.md`
+
+### Commands and results
+
+- `git status --short`: inspected existing uncommitted Phase 10 files and left
+  them intact.
+- `git diff --check`: passed.
+
+### Decisions
+
+- Model refinement is a separate module, not a Phase 12+ sequence.
+- Shorting remains out of scope until long/cash signal improves.
+- Phase 11 remains gated until model refinement produces a candidate worth
+  paper trading.
+
+### Remaining blockers
+
+- No model refinement implementation has started yet.
+- The next implementation unit is
+  `model_refinement/01_THRESHOLD_SWEEP_AND_DIAGNOSTICS.md`.
+
+### Recommended next work
+
+- Implement `rebuild/codex_rebuild/model_refinement/01_THRESHOLD_SWEEP_AND_DIAGNOSTICS.md`.
 
 ## Update template
 
