@@ -34,9 +34,9 @@ from trader.reporting.writer import write_backtest_report
 
 FEATURE_DATASET_SCHEMA_VERSION = "feature-dataset-v1"
 TARGET_DEFINITION = (
-    "target=1 when next_return > 2*(fee_per_side+slippage_per_side) "
-    "+ volatility_multiplier*realized_volatility_24h; else 0; unlabeled when "
-    "future close or volatility is unavailable"
+    "target=1 when close[t+horizon_bars]/close[t]-1 exceeds configured "
+    "cost_buffer plus volatility_multiplier*realized_volatility_24h; else 0; "
+    "unlabeled when future close or volatility is unavailable"
 )
 
 

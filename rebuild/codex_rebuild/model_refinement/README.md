@@ -39,6 +39,7 @@ Each file is intended to be completed by a separate Codex session:
 3. `03_MARKET_FEATURE_GROUPS.md`
 4. `04_EXPERIMENT_ORCHESTRATION.md`
 5. `05_SENTIMENT_REEVALUATION_GATE.md`
+6. `06_MODEL_CLASS_COMPARISON.md`
 
 Do not skip ahead. Each step should produce artifacts or tests that make the
 next step more trustworthy.

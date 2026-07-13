@@ -52,6 +52,13 @@ def test_metadata_hash_is_stable_for_unsorted_input() -> None:
     ).content_hash
 
 
+def test_content_hash_includes_symbol() -> None:
+    btc = rows()
+    eth = rows().assign(symbol="ETHUSDT")
+
+    assert content_hash(btc) != content_hash(eth)
+
+
 def test_rejects_empty_dataset(tmp_path) -> None:
     with pytest.raises(MarketStorageError, match="empty"):
         write_market_dataset(rows().iloc[0:0], tmp_path / "empty.parquet", source="test")

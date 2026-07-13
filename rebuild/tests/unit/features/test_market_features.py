@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -8,11 +9,16 @@ import pytest
 from trader.config import TraderConfig, load_config
 from trader.data.schemas import normalize_ohlcv
 from trader.features.market import (
+    CALENDAR_FEATURE_COLUMNS,
+    FEATURE_GROUP_RAW_COLUMNS,
     MODEL_FEATURE_COLUMNS,
     RAW_FEATURE_COLUMNS,
     build_feature_dataset,
     build_market_features,
+    model_feature_columns,
+    model_feature_columns_for_groups,
 )
+from trader.modeling.baseline import BaselineLogisticModel
 
 
 PROJECT_ROOT = Path(__file__).parents[3]
@@ -114,3 +120,111 @@ def test_feature_dataset_is_deterministic(config: TraderConfig) -> None:
     second = build_feature_dataset(data, config)
 
     pd.testing.assert_frame_equal(first, second)
+
+
+def test_baseline_only_config_preserves_current_model_columns(
+    config: TraderConfig,
+) -> None:
+    assert config.features.enabled_groups == ("baseline",)
+    assert model_feature_columns(config) == MODEL_FEATURE_COLUMNS
+    assert model_feature_columns_for_groups(("baseline",)) == MODEL_FEATURE_COLUMNS
+
+
+@pytest.mark.parametrize(
+    "group",
+    ["trend", "volatility", "volume", "calendar", "momentum_reversal"],
+)
+def test_each_group_can_be_enabled_with_baseline(
+    config: TraderConfig,
+    group: str,
+) -> None:
+    grouped_config = _with_groups(config, ("baseline", group))
+    data = ohlcv(closes=[100.0 + i for i in range(240)], volumes=[100.0 + i for i in range(240)])
+
+    features = build_feature_dataset(data, grouped_config)
+
+    for raw_column in FEATURE_GROUP_RAW_COLUMNS[group]:
+        assert raw_column in features.columns
+    for feature_column in model_feature_columns(grouped_config):
+        assert feature_column in features.columns
+
+
+def test_future_mutation_does_not_change_past_group_features(
+    config: TraderConfig,
+) -> None:
+    grouped_config = _with_groups(
+        config,
+        ("baseline", "trend", "volatility", "volume", "calendar", "momentum_reversal"),
+    )
+    data = ohlcv(closes=[100.0 + i for i in range(260)], volumes=[100.0 + i for i in range(260)])
+    mutated = data.copy()
+    mutated.loc[230, "close"] = 50_000.0
+    mutated.loc[230, "volume"] = 50_000.0
+
+    original = build_feature_dataset(data, grouped_config)
+    changed = build_feature_dataset(mutated, grouped_config)
+
+    pd.testing.assert_frame_equal(original.iloc[:180], changed.iloc[:180])
+
+
+def test_warmup_missingness_flags_are_set_before_imputation(
+    config: TraderConfig,
+) -> None:
+    grouped_config = _with_groups(config, ("baseline", "trend"))
+    data = ohlcv(closes=[100.0 + i for i in range(220)])
+
+    features = build_feature_dataset(data, grouped_config)
+
+    assert features.loc[0, "return_24h_missing"] == 1
+    assert features.loc[0, "sma_168_distance_missing"] == 1
+    assert features.loc[200, "sma_168_distance_missing"] == 0
+
+
+def test_calendar_encodings_are_bounded_and_deterministic(
+    config: TraderConfig,
+) -> None:
+    grouped_config = _with_groups(config, ("baseline", "calendar"))
+    data = ohlcv(closes=[100.0 + i for i in range(72)])
+
+    first = build_feature_dataset(data, grouped_config)
+    second = build_feature_dataset(data, grouped_config)
+
+    pd.testing.assert_frame_equal(
+        first.loc[:, CALENDAR_FEATURE_COLUMNS],
+        second.loc[:, CALENDAR_FEATURE_COLUMNS],
+    )
+    assert first["hour_sin"].between(-1.0, 1.0).all()
+    assert first["hour_cos"].between(-1.0, 1.0).all()
+    assert first["day_of_week_sin"].between(-1.0, 1.0).all()
+    assert first["day_of_week_cos"].between(-1.0, 1.0).all()
+    assert set(first["weekend_flag"].unique()) <= {0, 1}
+    assert not any(
+        column.startswith("hour_") and column.endswith("_clipped")
+        for column in first.columns
+    )
+
+
+def test_model_metadata_records_exact_enabled_group_feature_names(
+    config: TraderConfig,
+) -> None:
+    grouped_config = _with_groups(config, ("baseline", "calendar"))
+    data = build_feature_dataset(
+        ohlcv(closes=[100.0 + i for i in range(240)], volumes=[100.0 + i for i in range(240)]),
+        grouped_config,
+    )
+
+    model = BaselineLogisticModel(grouped_config).fit(data)
+    metadata = model.metadata()
+
+    assert model.feature_names == model_feature_columns(grouped_config)
+    assert metadata["feature_names"] == list(model_feature_columns(grouped_config))
+
+
+def _with_groups(
+    config: TraderConfig,
+    groups: tuple[str, ...],
+) -> TraderConfig:
+    return replace(
+        config,
+        features=replace(config.features, enabled_groups=groups),
+    )

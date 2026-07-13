@@ -113,6 +113,8 @@ data:
   symbol: BTCUSDT
   interval: 1h
 features:
+  enabled_groups:
+    - baseline
   volatility_window: 2
   volume_window: 2
   rsi_window: 2
@@ -120,6 +122,7 @@ features:
   clipping_mad_multiplier: 8.0
 target:
   horizon_bars: 1
+  cost_buffer: round_trip
   volatility_multiplier: 0.0
 model:
   probability_threshold: 0.5

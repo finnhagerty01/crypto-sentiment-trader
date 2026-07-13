@@ -29,6 +29,94 @@ def test_all_phase_08_commands_are_listed_in_help(
         assert command in output
 
 
+def test_run_experiment_grid_is_listed_in_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["run-experiment-grid", "--help"])
+
+    assert exit_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "--market-data" in output
+    assert "--experiment-config" in output
+    assert "--output-dir" in output
+    assert "--run-id" in output
+
+
+def test_run_sentiment_gate_is_listed_in_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["run-sentiment-gate", "--help"])
+
+    assert exit_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "--market-data" in output
+    assert "--hourly-sentiment" in output
+    assert "--output-dir" in output
+    assert "--run-id" in output
+
+
+def test_run_model_class_comparison_is_listed_in_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["run-model-class-comparison", "--help"])
+
+    assert exit_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "--market-data" in output
+    assert "--output-dir" in output
+    assert "--run-id" in output
+    assert "--enable-xgboost" in output
+
+
+def test_run_candle_interval_comparison_is_listed_in_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["run-candle-interval-comparison", "--help"])
+
+    assert exit_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "--market-data" in output
+    assert "--output-dir" in output
+    assert "--run-id" in output
+    assert "--intervals" in output
+    assert "--max-development-exposure" in output
+
+
+def test_run_regime_specialist_comparison_is_listed_in_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["run-regime-specialist-comparison", "--help"])
+
+    assert exit_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "--market-data" in output
+    assert "--output-dir" in output
+    assert "--run-id" in output
+    assert "--lookback-bars" in output
+
+
+def test_run_symbol_interval_grid_is_listed_in_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        main(["run-symbol-interval-grid", "--help"])
+
+    assert exit_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "--output-dir" in output
+    assert "--run-id" in output
+    assert "--symbols" in output
+    assert "--intervals" in output
+    assert "--start" in output
+    assert "--end" in output
+    assert "--max-development-exposure" in output
+
+
 def test_collect_market_writes_dataset_offline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -1,4 +1,4 @@
-"""Explicit BTCUSDT 1h market-data collection."""
+"""Explicit Binance.US spot market-data collection."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from trader.data.schemas import normalize_ohlcv
 
 
 BINANCE_US_KLINES_URL = "https://api.binance.us/api/v3/klines"
+BINANCE_US_EXCHANGE_INFO_URL = "https://api.binance.us/api/v3/exchangeInfo"
 SOURCE_NAME = "binance-us-spot-klines"
 
 
@@ -50,6 +51,7 @@ class BinanceUsSpotKlineClient:
 
     http_client: HttpClient = UrlLibHttpClient()
     base_url: str = BINANCE_US_KLINES_URL
+    exchange_info_url: str = BINANCE_US_EXCHANGE_INFO_URL
     timeout_seconds: float = 10.0
     max_retries: int = 3
 
@@ -84,6 +86,46 @@ class BinanceUsSpotKlineClient:
                     time.sleep(0.25 * (2**attempt))
         raise MarketCollectionError(f"failed to fetch klines: {last_error}") from last_error
 
+    def fetch_exchange_info(self) -> dict[str, object]:
+        payload = self._get_with_retries(self.exchange_info_url, {})
+        if not isinstance(payload, dict):
+            raise MarketCollectionError("exchangeInfo response was not a JSON object")
+        return payload
+
+    def available_symbols(self) -> set[str]:
+        """Return Binance.US spot symbols that are currently trading."""
+
+        payload = self.fetch_exchange_info()
+        raw_symbols = payload.get("symbols")
+        if not isinstance(raw_symbols, list):
+            raise MarketCollectionError("exchangeInfo response missing symbols list")
+        available: set[str] = set()
+        for raw_symbol in raw_symbols:
+            if not isinstance(raw_symbol, dict):
+                continue
+            symbol = raw_symbol.get("symbol")
+            status = raw_symbol.get("status")
+            permissions = raw_symbol.get("permissions", [])
+            is_spot = raw_symbol.get("isSpotTradingAllowed", False) or (
+                isinstance(permissions, list) and "SPOT" in permissions
+            )
+            if isinstance(symbol, str) and status == "TRADING" and is_spot:
+                available.add(symbol)
+        return available
+
+    def _get_with_retries(self, url: str, params: dict[str, object]) -> object:
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries):
+            try:
+                return self.http_client.get_json(
+                    url, params, timeout=self.timeout_seconds
+                )
+            except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+                last_error = exc
+                if attempt + 1 < self.max_retries:
+                    time.sleep(0.25 * (2**attempt))
+        raise MarketCollectionError(f"failed to fetch exchangeInfo: {last_error}") from last_error
+
 
 def collect_market_data(
     *,
@@ -94,12 +136,12 @@ def collect_market_data(
     client: BinanceUsSpotKlineClient | None = None,
     now: str | pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Fetch closed BTCUSDT 1h candles and return canonical OHLCV rows."""
+    """Fetch closed spot candles and return canonical OHLCV rows."""
 
-    if symbol != "BTCUSDT":
-        raise MarketCollectionError("baseline collector supports only BTCUSDT")
     if interval != "1h":
-        raise MarketCollectionError("baseline collector supports only 1h interval")
+        raise MarketCollectionError("collector supports only 1h interval")
+    if not symbol or not symbol.isalnum():
+        raise MarketCollectionError("symbol must be a non-empty alphanumeric value")
 
     start_ts = _to_utc_timestamp(start, "start")
     end_ts = _to_utc_timestamp(end, "end")

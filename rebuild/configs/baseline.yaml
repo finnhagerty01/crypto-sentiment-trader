@@ -3,6 +3,8 @@ data:
   interval: 1h
 
 features:
+  enabled_groups:
+    - baseline
   volatility_window: 24
   volume_window: 24
   rsi_window: 14
@@ -11,6 +13,7 @@ features:
 
 target:
   horizon_bars: 1
+  cost_buffer: round_trip
   volatility_multiplier: 0.10
 
 model:

@@ -2,8 +2,9 @@
 
 ## Current phase
 
-Phase 10 is complete. Model refinement is next. Phase 11 remains gated future
-paper-trading work.
+Phase 10 is complete. Model Refinement 01, 02, 02.5, 03, 04, 05, and 06 are
+complete. A non-phase cross-symbol fine-interval diagnostic is complete.
+Phase 11 remains gated future paper-trading work.
 
 ## Completed phases
 
@@ -20,7 +21,7 @@ paper-trading work.
 ## Current verification status
 
 - Legacy suite observed on June 27, 2026: `270 passed, 57 failed, 246 warnings`.
-- Replacement suite: `88 passed`.
+- Replacement suite: `179 passed`.
 - `rebuild/` is an isolated Python project with independent pytest discovery.
 - Default rebuild installation excludes Reddit, transformer, tree-model,
   plotting, and research dependencies.
@@ -30,6 +31,8 @@ paper-trading work.
 - Build the replacement under `rebuild/src/trader/` before quarantining legacy code.
 - Run rebuild dependency and test commands from `rebuild/`.
 - Core baseline is BTCUSDT one-hour market data only.
+- Research diagnostics may evaluate other Binance.US spot symbols, but this
+  does not change the core baseline or authorize paper trading.
 - Core model is Logistic Regression.
 - Core evaluation is chronological and long-or-cash.
 - EWMA/Kalman sentiment work is deferred until the market-only baseline is accepted.
@@ -820,7 +823,840 @@ Do not modify or delete without explicit instruction:
 
 - Implement `rebuild/codex_rebuild/model_refinement/01_THRESHOLD_SWEEP_AND_DIAGNOSTICS.md`.
 
+## 2026-07-12 — Model Refinement 01
+
+### Completed
+
+- Added threshold sweep diagnostics for the existing market-only Logistic
+  Regression model without changing target, features, model class, costs, or
+  long-or-cash backtest behavior.
+- Added the fixed threshold candidate set from `0.10` through `0.55`.
+- Refit the model once per chronological development fold, generated one
+  validation probability vector per fold, and evaluated every threshold against
+  that same vector.
+- Added per-fold classification metrics, probability diagnostics, and trading
+  metrics for each threshold.
+- Added development-only threshold aggregation and deterministic selection:
+  zero-trade thresholds are excluded, negative or below-cash median returns are
+  excluded, then candidates are ranked by median return, drawdown magnitude,
+  and turnover.
+- Added holdout evaluation only after development-fold threshold selection.
+- Added artifact writing helpers for `threshold_fold_metrics.csv`,
+  `threshold_summary.csv`, `selected_threshold.json`, and
+  `holdout_threshold_metrics.json`.
+- Added `scripts/run_threshold_sweep.py` as a simple command wrapper around the
+  threshold API to avoid fragile pasted heredocs.
+- Added unit coverage for shared fold probabilities, deterministic selection,
+  zero-trade exclusion, holdout isolation, all-fail selection, and inclusive
+  `>= threshold` signal conversion.
+- Ran the sweep on
+  `artifacts/datasets/btcusdt_1h_features_e5ddf65b05a6.parquet`; it selected
+  threshold `0.10` from development folds and wrote the four threshold
+  artifacts under `artifacts/model_refinement/threshold_sweep_01/`.
+
+### Files changed
+
+- `rebuild/src/trader/modeling/thresholds.py`
+- `rebuild/scripts/run_threshold_sweep.py`
+- `rebuild/tests/unit/modeling/test_thresholds.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/modeling/test_thresholds.py` from `rebuild/`: initially failed
+  while tightening synthetic price fixtures; fixed the tests so losing
+  low-threshold exposure is represented explicitly.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/modeling/test_thresholds.py` from `rebuild/`: passed, `6 passed`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `94 passed, 24 warnings`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall
+  -q src/trader` from `rebuild/`: passed.
+- Final `git diff --check` from the repository root: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python
+  scripts/run_threshold_sweep.py` from `rebuild/`: passed; selected threshold
+  `0.10`, wrote `threshold_fold_metrics.csv`, `threshold_summary.csv`,
+  `selected_threshold.json`, and `holdout_threshold_metrics.json`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m py_compile
+  scripts/run_threshold_sweep.py` from `rebuild/`: passed.
+
+### Decisions
+
+- Kept the sweep as a modeling module API for this step; CLI/workflow
+  orchestration can wire it into saved baseline artifacts in the later
+  refinement orchestration step.
+- Selection uses development summaries only. Holdout metrics are confirmation
+  output and are not passed into `select_threshold`.
+- `max_drawdown` is stored in the existing negative-return convention, so the
+  tie-break uses lower drawdown magnitude rather than a more negative numeric
+  value.
+- The real baseline feature artifact sweep selected `0.10` on development
+  folds. The default `0.55` and `0.50` thresholds produced zero trades across
+  development folds, so the observed issue is at least partly a too-strict
+  threshold rather than a complete inability to produce long signals.
+
+### Remaining blockers
+
+- Threshold sweep is available through `scripts/run_threshold_sweep.py`, but no
+  first-class `crypto-trader` CLI subcommand has been added.
+- Phase 11 remains blocked until refinement produces a development-selected
+  candidate confirmed on holdout.
+- Shorting remains out of scope.
+
+### Recommended next work
+
+- Run or wire the threshold sweep against reproduced Phase 08 baseline
+  artifacts before moving to
+  `model_refinement/02_TARGET_AND_HORIZON_EXPERIMENTS.md`.
+
+## 2026-07-12 — Model Refinement 02
+
+### Completed
+
+- Added explicit `target.cost_buffer` configuration with allowed values
+  `none`, `one_way`, and `round_trip`.
+- Preserved the previous baseline target behavior by setting
+  `cost_buffer: round_trip` in `configs/baseline.yaml` and offline workflow
+  test configuration.
+- Updated target construction so `next_return` uses the configured future
+  close horizon and `noise_band` uses the selected cost buffer plus the
+  configured volatility multiplier.
+- Added target-distribution diagnostics covering row count, labeled count,
+  positive and negative counts, positive rate, unlabeled count, and first/last
+  labeled timestamps.
+- Updated affected test config builders to include the new target field.
+- Added unit coverage for hand-calculated labels across all cost-buffer modes,
+  multi-bar horizon labeling, end-of-series unlabeled rows, baseline default
+  preservation, invalid cost-buffer rejection, and positive-rate diagnostics.
+
+### Files changed
+
+- `rebuild/configs/baseline.yaml`
+- `rebuild/src/trader/config.py`
+- `rebuild/src/trader/features/target.py`
+- `rebuild/tests/integration/test_offline_baseline_workflow.py`
+- `rebuild/tests/unit/features/test_target.py`
+- `rebuild/tests/unit/modeling/test_artifacts.py`
+- `rebuild/tests/unit/modeling/test_baseline.py`
+- `rebuild/tests/unit/modeling/test_thresholds.py`
+- `rebuild/tests/unit/modeling/test_validation.py`
+- `rebuild/tests/unit/reporting/test_writer.py`
+- `rebuild/tests/unit/sentiment/test_storage_experiments.py`
+- `rebuild/tests/unit/test_config.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/features/test_target.py tests/unit/test_config.py` from
+  `rebuild/`: passed, `26 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: initially failed because
+  `tests/integration/test_offline_baseline_workflow.py` used an inline config
+  without `target.cost_buffer`; fixed the fixture to use `round_trip`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `99 passed, 24 warnings`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall
+  -q src/trader` from `rebuild/`: passed.
+- Final `git diff --check` from the repository root: passed.
+
+### Decisions
+
+- `cost_buffer` is validated in the strict config loader as a string enum
+  rather than adding permissive backward compatibility for old generated
+  artifacts.
+- The baseline remains equivalent to the previous target because
+  `round_trip` computes `2 * (fee_per_side + slippage_per_side)`.
+- Target diagnostics are implemented as a pure helper in
+  `trader.features.target` so later experiment orchestration can compare
+  target/horizon grid candidates without involving holdout selection.
+- No target/horizon candidate was selected in this step; selection remains for
+  the later development-fold orchestration work.
+
+### Remaining blockers
+
+- Phase 11 remains blocked.
+- Target/horizon grid orchestration is not wired yet.
+- Feature group experiments have not started.
+
+### Recommended next work
+
+- Implement
+  `model_refinement/03_MARKET_FEATURE_GROUPS.md` after using the new target
+  diagnostics in the planned orchestration flow.
+
+## 2026-07-12 — Model Refinement 02 grid execution
+
+### Completed
+
+- Added reusable target/horizon grid-search orchestration for the exact Model
+  Refinement 02 grid: horizons `1, 3, 6, 12, 24`, cost buffers `none`,
+  `one_way`, `round_trip`, and volatility multipliers `0.00, 0.05, 0.10`.
+- Added `scripts/run_target_horizon_grid.py` with defaults pointing at the
+  current saved raw BTCUSDT 1h parquet and output under
+  `artifacts/model_refinement/target_horizon_grid/`.
+- For each of the 45 candidates, the script rebuilds the feature dataset,
+  records target-distribution diagnostics, runs the existing threshold sweep,
+  and writes per-candidate artifacts.
+- Added top-level grid outputs: `grid_results.csv`, `grid_results.json`,
+  `selected_candidate.json`, and `target_horizon_grid_report.md`.
+- Updated workflow target-definition metadata to describe configurable
+  horizon and cost-buffer behavior instead of the old hardcoded round-trip
+  target.
+- Ran the grid on the currently available five-month dataset.
+
+### Files changed
+
+- `rebuild/src/trader/modeling/target_horizon_grid.py`
+- `rebuild/scripts/run_target_horizon_grid.py`
+- `rebuild/tests/unit/modeling/test_target_horizon_grid.py`
+- `rebuild/src/trader/workflow.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/modeling/test_target_horizon_grid.py
+  tests/unit/features/test_target.py tests/unit/test_config.py` from
+  `rebuild/`: passed, `31 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m py_compile
+  scripts/run_target_horizon_grid.py` from `rebuild/`: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python
+  scripts/run_target_horizon_grid.py` from `rebuild/`: passed; evaluated 45
+  candidates, selected `h12_none_vol0p10` with threshold `0.30`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python
+  scripts/run_target_horizon_grid.py --overwrite` from `rebuild/`: passed
+  after fixing the top-level holdout exposure column name; selected the same
+  candidate.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `104 passed, 24 warnings`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall
+  -q src/trader` from `rebuild/`: passed.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m py_compile
+  scripts/run_threshold_sweep.py scripts/run_target_horizon_grid.py` from
+  `rebuild/`: passed.
+- Final `git diff --check` from the repository root: passed.
+
+### Results
+
+- Development-selected candidate: `h12_none_vol0p10`.
+- Candidate definition: 12-hour target horizon, no explicit cost buffer, and
+  `0.10` volatility multiplier.
+- Selected probability threshold: `0.30`.
+- Development median return: about `+2.41%`.
+- Development median max drawdown: about `-5.38%`.
+- Development median turnover: about `2.04`.
+- Target positive rate: about `47.77%`.
+- Holdout total return: about `-6.06%`.
+- Holdout max drawdown: about `-11.65%`.
+- Holdout trades: `2`.
+- Holdout exposure: about `99.86%`.
+- All 45 candidates produced a development-selected threshold, but the
+  selected candidate did not confirm on holdout.
+
+### Decisions
+
+- The current five-month dataset is acceptable for a smoke/current-data
+  refinement run, but not enough evidence for a robust paper-trading gate.
+- Development selection still ignores holdout; holdout is reported only as
+  confirmation.
+- The current grid suggests the one-hour round-trip target is stricter and
+  less favorable than several longer or looser targets on development folds,
+  but holdout failure prevents accepting a paper-trading candidate.
+
+### Remaining blockers
+
+- Phase 11 remains blocked.
+- No target/horizon candidate is accepted for paper trading.
+- Feature group experiments remain the next refinement step, but they should
+  be interpreted against the limited five-month dataset.
+
+### Recommended next work
+
+- Continue to `model_refinement/03_MARKET_FEATURE_GROUPS.md` using the grid
+  outputs as context, while keeping Phase 11 blocked.
+
+## 2026-07-12 — Model Refinement 02.5 recency-window diagnostic
+
+### Completed
+
+- Added an experiment-level train-window policy hook to the threshold sweep
+  path without changing the default expanding-window behavior.
+- Added supported train-window policies: `expanding`, `rolling_1000`,
+  `rolling_1500`, `rolling_2000`, and `rolling_2500`.
+- Kept Logistic Regression, current market-only features, long/cash
+  backtesting, chronological boundaries, fixed threshold candidates, and
+  development-only threshold selection unchanged.
+- Added `scripts/run_recency_window_diagnostic.py` to compare all train-window
+  policies on the target-grid winner configuration:
+  `horizon_bars=12`, `cost_buffer=none`, `volatility_multiplier=0.10`.
+- Wrote recency artifacts under
+  `artifacts/model_refinement/recency_window_diagnostic/`, including
+  `window_results.csv`, `window_results.json`, `selected_window.json`,
+  `recency_window_report.md`, and per-window threshold sweep artifacts.
+- Added unit coverage for expanding fold parity, rolling-window train caps,
+  chronological train-before-validation order, invalid policy rejection,
+  holdout isolation for rolling holdout fits, development-only recency
+  selection, and diagnostic summary row fields.
+
+### Files changed
+
+- `rebuild/src/trader/modeling/thresholds.py`
+- `rebuild/scripts/run_recency_window_diagnostic.py`
+- `rebuild/tests/unit/modeling/test_thresholds.py`
+- `rebuild/tests/unit/modeling/test_recency_windows.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/modeling/test_thresholds.py tests/unit/modeling/test_recency_windows.py`
+  from `rebuild/`: passed, `14 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python
+  scripts/run_recency_window_diagnostic.py --overwrite` from `rebuild/`:
+  passed; selected `expanding` with threshold `0.30`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `112 passed, 24 warnings`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall
+  -q src/trader` from `rebuild/`: passed.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m py_compile
+  scripts/run_recency_window_diagnostic.py` from `rebuild/`: passed.
+- Final `git diff --check` from the repository root: passed.
+
+### Results
+
+- Development-selected train window: `expanding`.
+- Selected probability threshold: `0.30`.
+- Development median return: about `+2.41%`.
+- Development median max drawdown: about `-5.38%`.
+- Development median turnover: about `2.04`.
+- Holdout total return: about `-6.06%`.
+- Holdout max drawdown: about `-11.65%`.
+- Holdout trades: `2`.
+- Holdout turnover: about `1.94`.
+- Holdout exposure: about `99.86%`.
+- Rolling windows did not improve holdout return or reduce exposure versus the
+  expanding baseline; all policies had the same negative holdout return and
+  near-full holdout exposure.
+
+### Decisions
+
+- Recency dynamics are not confirmed as the primary failure mode on the
+  current five-month dataset.
+- Phase 11 remains blocked because the development-selected policy did not
+  confirm on holdout.
+- Proceed to market feature group experiments rather than changing model class,
+  adding shorting, or starting paper trading.
+
+### Remaining blockers
+
+- Phase 11 remains blocked.
+- No target/horizon/window policy is accepted for paper trading.
+- Market feature groups have not started.
+
+### Recommended next work
+
+- Continue to `model_refinement/03_MARKET_FEATURE_GROUPS.md` using the target
+  grid and recency-window artifacts as context.
+
+## 2026-07-12 — Model Refinement 03 market feature groups
+
+### Completed
+
+- Added strict `features.enabled_groups` config support with default baseline
+  behavior preserved by `enabled_groups: ["baseline"]`.
+- Added allowed market feature groups: `trend`, `volatility`, `volume`,
+  `calendar`, and `momentum_reversal`.
+- Added causal feature generation for each group, with clipped model columns
+  and missingness flags for non-calendar features and raw bounded encodings
+  for calendar features.
+- Replaced fixed model-feature selection in the model/sweep path with
+  config-aware feature-name helpers while preserving the baseline
+  `MODEL_FEATURE_COLUMNS` tuple for existing callers.
+- Added Model Refinement 03 orchestration that evaluates baseline alone and
+  baseline plus one added market feature group at a time under the selected
+  target-grid winner configuration:
+  `horizon_bars=12`, `cost_buffer=none`, `volatility_multiplier=0.10`.
+- Wrote feature-group artifacts under
+  `artifacts/model_refinement/market_feature_groups/`.
+
+### Files changed
+
+- `rebuild/configs/baseline.yaml`
+- `rebuild/src/trader/config.py`
+- `rebuild/src/trader/features/market.py`
+- `rebuild/src/trader/modeling/baseline.py`
+- `rebuild/src/trader/modeling/thresholds.py`
+- `rebuild/src/trader/modeling/market_feature_groups.py`
+- `rebuild/scripts/run_market_feature_group_experiment.py`
+- `rebuild/tests/integration/test_offline_baseline_workflow.py`
+- `rebuild/tests/unit/features/test_market_features.py`
+- `rebuild/tests/unit/modeling/test_market_feature_groups.py`
+- `rebuild/tests/unit/test_config.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/test_config.py tests/unit/features/test_market_features.py
+  tests/unit/modeling/test_baseline.py
+  tests/unit/modeling/test_market_feature_groups.py` from `rebuild/`:
+  passed, `49 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m py_compile
+  scripts/run_market_feature_group_experiment.py` from `rebuild/`: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python
+  scripts/run_market_feature_group_experiment.py --overwrite` from
+  `rebuild/`: passed; selected `baseline` with threshold `0.30`.
+- Initial full `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests`
+  from `rebuild/`: failed because the offline integration test's inline config
+  lacked the new required `features.enabled_groups`; fixed the fixture to
+  declare `baseline`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `129 passed, 24 warnings`.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall
+  -q src/trader` from `rebuild/`: passed.
+- Final `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m py_compile
+  scripts/run_threshold_sweep.py scripts/run_target_horizon_grid.py
+  scripts/run_recency_window_diagnostic.py
+  scripts/run_market_feature_group_experiment.py` from `rebuild/`: passed.
+- Final `git diff --check` from the repository root: passed.
+
+### Results
+
+- Development-selected feature group: `baseline`.
+- Selected probability threshold: `0.30`.
+- Development median return: about `+2.41%`.
+- Development median max drawdown: about `-5.38%`.
+- Development median turnover: about `2.04`.
+- Holdout total return: about `-6.06%`.
+- Holdout max drawdown: about `-11.65%`.
+- Holdout trades: `2`.
+- Holdout turnover: about `1.94`.
+- Holdout exposure: about `99.86%`.
+- Added feature groups did not improve development selection versus baseline:
+  `baseline__calendar` was the closest by development median return at about
+  `+2.21%`, still below baseline's about `+2.41%`.
+- All feature-group candidates had the same negative holdout return and
+  near-full holdout exposure on the current five-month dataset.
+
+### Decisions
+
+- Keep the production/default baseline feature set unchanged as
+  `enabled_groups: ["baseline"]`.
+- Do not enable any new market feature group by default.
+- Holdout remains confirmation only; selection continued to use development
+  folds only.
+- No sentiment, shorting, model-class change, hyperparameter tuning, paper
+  trading, or live trading was added.
+
+### Remaining blockers
+
+- Phase 11 remains blocked.
+- No target/horizon/window/feature-group candidate is accepted for paper
+  trading.
+
+### Recommended next work
+
+- Do not start paper trading.
+- Either gather a longer market-only dataset for the same refinement suite or
+  define the next constrained market-only diagnostic before reconsidering the
+  Phase 11 gate.
+
+## 2026-07-12 — Model Refinement 04 experiment orchestration
+
+### Completed
+
+- Added `crypto-trader run-experiment-grid` for deterministic named-variant
+  model-refinement comparisons from a saved raw market dataset.
+- Added strict experiment YAML parsing with unique path-safe variant names,
+  per-variant full config loading, dot-path overrides, clear unknown override
+  failures, and duplicate variant-name failures.
+- Added per-variant resolved config artifacts under
+  `artifacts/experiments/<run_id>/variants/<variant_name>/resolved_config.yaml`.
+- Reused `run_threshold_sweep`, config-aware `model_feature_columns(config)`,
+  existing causal feature building, Logistic Regression, chronological
+  development/holdout splitting, and long/cash backtesting.
+- Added output artifacts:
+  `experiment_config.yaml`, `variant_summary.csv`, `target_distribution.csv`,
+  `threshold_summary.csv`, `fold_metrics.csv`, `holdout_metrics.csv`, and
+  `benchmark_metrics.csv`.
+- Ranking uses development folds only: selected threshold required,
+  non-negative median development return required, median development return
+  must beat cash, then ranks by median development return with drawdown and
+  turnover tie-breaks. Holdout metrics are written separately and are not used
+  for selection.
+- Added sample experiment config
+  `configs/experiments/market_signal_grid.yaml`.
+
+### Files changed
+
+- `rebuild/src/trader/modeling/experiments.py`
+- `rebuild/src/trader/cli.py`
+- `rebuild/configs/experiments/market_signal_grid.yaml`
+- `rebuild/tests/integration/test_experiment_grid.py`
+- `rebuild/tests/unit/test_cli.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/test_cli.py tests/integration/test_experiment_grid.py` from
+  `rebuild/`: passed, `8 passed, 20 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `134 passed, 44 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- No scripts were changed or added, so no script `py_compile` command was
+  required for Model Refinement 04.
+- `git diff --check` from the repository root: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader
+  run-experiment-grid --market-data
+  artifacts/datasets/btcusdt_1h_raw_20260101T000000Z_20260601T000000Z_20260712T174420Z.parquet
+  --experiment-config configs/experiments/market_signal_grid.yaml
+  --output-dir artifacts/experiments --run-id market-refinement-04` from
+  `rebuild/`: passed and wrote
+  `artifacts/experiments/market-refinement-04/`.
+
+### Results
+
+- Experiment artifact path:
+  `rebuild/artifacts/experiments/market-refinement-04/`.
+- Development-ranked selected variant: `h12_none_v010_baseline`.
+- Selected threshold: `0.30`.
+- Development median total return: about `+2.41%`.
+- Development median cash total return: `0.00%`.
+- Development median max drawdown: about `-5.38%`.
+- Development median turnover: about `2.04`.
+- Holdout total return: about `-6.06%`.
+- Holdout max drawdown: about `-11.65%`.
+- Holdout trade count: `2`.
+- Holdout turnover: about `1.94`.
+- Holdout exposure: about `99.86%`.
+- Holdout benchmark confirmation:
+  cash `0.00%`, buy-and-hold about `-6.06%`, momentum-24h about `-13.51%`.
+- All named feature-group variants ranked below the baseline-only variant on
+  development folds. All variants had the same poor holdout return and
+  near-full holdout exposure on the current five-month dataset.
+
+### Decisions
+
+- Keep the selected target-grid candidate:
+  `horizon_bars=12`, `cost_buffer=none`,
+  `volatility_multiplier=0.10`, threshold `0.30`.
+- Keep expanding train windows and baseline-only market features.
+- Do not start paper trading. Holdout confirmation remains poor despite the
+  development-ranked candidate beating cash in development folds.
+- No sentiment, shorting, model-class change, hyperparameter tuning, paper
+  trading, or live trading was added.
+
+### Remaining blockers
+
+- Phase 11 remains blocked.
+- No model-refinement candidate is accepted for paper trading because holdout
+  return remains about `-6.06%` with about `-11.65%` max drawdown and about
+  `99.86%` exposure.
+
+### Recommended next work
+
+- Do not start paper trading.
+- Either gather a longer saved market dataset and rerun the now-unified
+  experiment grid, or define the next constrained market-only diagnostic before
+  reconsidering the Phase 11 gate.
+
+## 2026-07-12 — Model Refinement 05
+
+### Completed
+
+- Added `crypto-trader run-sentiment-gate` for the controlled sentiment
+  reevaluation gate.
+- The command accepts `--market-data`, `--hourly-sentiment`, `--output-dir`,
+  and `--run-id`.
+- The gate reads only saved market and hourly sentiment Parquet datasets. It
+  does not fetch Reddit, Binance, or external data.
+- The gate rebuilds market features with the fixed selected market-only
+  controls:
+  `horizon_bars=12`, `cost_buffer=none`,
+  `volatility_multiplier=0.10`, threshold metadata `0.30`, expanding train
+  windows, and baseline-only market features.
+- The gate evaluates `market_only`, the Phase 10 sentiment variants in order,
+  and a clearly labeled `sentiment_only` research diagnostic.
+- The gate writes:
+  `sentiment_gate_summary.csv`, `sentiment_target_distribution.csv`,
+  `sentiment_threshold_summary.csv`, `sentiment_fold_metrics.csv`,
+  `sentiment_holdout_metrics.csv`, `sentiment_benchmark_metrics.csv`,
+  `sentiment_feature_diagnostics.csv`,
+  `sentiment_gate_decision.json`, and per-variant resolved config and feature
+  column metadata.
+- Added Model Refinement 06 planning markdown for a future controlled model
+  class comparison. No Model Refinement 06 implementation was added.
+
+### Files changed
+
+- `rebuild/src/trader/sentiment/gate.py`
+- `rebuild/src/trader/cli.py`
+- `rebuild/tests/unit/test_cli.py`
+- `rebuild/tests/unit/sentiment/test_experiment_gate.py`
+- `rebuild/tests/integration/test_experiment_grid.py`
+- `rebuild/codex_rebuild/model_refinement/06_MODEL_CLASS_COMPARISON.md`
+- `rebuild/codex_rebuild/model_refinement/README.md`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/test_cli.py tests/unit/sentiment
+  tests/integration/test_experiment_grid.py` from `rebuild/`: passed,
+  `26 passed, 20 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `142 passed, 44 warnings`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check` from the repository root: passed.
+
+### Results
+
+- No real five-month sentiment gate artifact was produced because there is no
+  saved hourly sentiment dataset under `rebuild/artifacts/`.
+- Deterministic local fixture gate runs were produced only inside pytest
+  temporary directories.
+- The fixture decision path writes
+  `sentiment_kept_for_phase11=false` and
+  `phase11_remains_blocked=true`.
+- `sentiment_only` is always marked research-only and cannot become the Phase
+  11 candidate.
+- Selected development-ranked sentiment variant from a real run: not available
+  until a saved hourly sentiment dataset exists.
+- Holdout confirmation from a real run: not available until a saved hourly
+  sentiment dataset exists.
+
+### Decisions
+
+- Sentiment remains research-only until a real saved hourly sentiment dataset
+  is provided and a gate run passes the strict keep policy.
+- Model Refinement 06 was added as planning only and was not implemented.
+- Phase 11 remains blocked.
+
+### Remaining blockers
+
+- A real five-month sentiment gate still requires a saved hourly sentiment
+  Parquet dataset readable by `read_hourly_sentiment_dataset`.
+- Phase 11 remains blocked because the current market-only holdout remains poor
+  and no sentiment confirmation has been run on a real saved hourly sentiment
+  dataset.
+
+### Recommended next work
+
+- Produce or locate the saved hourly sentiment dataset without fetching during
+  the gate command, then run `crypto-trader run-sentiment-gate` against the
+  existing saved market dataset.
+- If sentiment fails the gate, keep it research-only and proceed only to the
+  controlled Model Refinement 06 comparison if the user explicitly wants that
+  diagnostic.
+
 ## Update template
+
+## 2026-07-12 — Server CSV Sentiment Build Script
+
+### Completed
+
+- Added a reproducible script to convert existing server Reddit CSV files into
+  the saved hourly sentiment Parquet dataset required by Model Refinement 05.
+- The script reads `../reddit_archive_server.csv` and
+  `../master_reddit_server.csv` by default, deduplicates by Reddit submission
+  id, records the converted raw post-only dataset, scores title plus selftext,
+  builds hourly sentiment features, and writes the hourly dataset.
+- The script supports `--scorer vader` for the research run and
+  `--scorer lexicon` for deterministic local testing.
+- The available server CSVs contain posts/submissions only. No comment bodies
+  were present, so the generated sentiment is posts-only; comment sentiment
+  columns remain unavailable.
+- Ran Model Refinement 05 against the VADER-scored posts-only hourly sentiment
+  dataset.
+
+### Files changed
+
+- `rebuild/scripts/build_hourly_sentiment_from_server_csv.py`
+- `rebuild/tests/unit/sentiment/test_server_csv_sentiment_script.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/sentiment/test_server_csv_sentiment_script.py` from `rebuild/`:
+  passed, `1 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m py_compile
+  scripts/build_hourly_sentiment_from_server_csv.py` from `rebuild/`: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python
+  scripts/build_hourly_sentiment_from_server_csv.py --scorer lexicon
+  --raw-dataset-id reddit_server_csv_posts_only_raw_lexicon
+  --hourly-dataset-id reddit_server_csv_posts_only_hourly_lexicon` from
+  `rebuild/`: passed; wrote the lexicon proof dataset.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra sentiment python
+  scripts/build_hourly_sentiment_from_server_csv.py --scorer vader
+  --raw-dataset-id reddit_server_csv_posts_only_raw_vader
+  --hourly-dataset-id reddit_server_csv_posts_only_hourly_vader` from
+  `rebuild/`: initially failed because optional sentiment dependencies were
+  not installed and network was restricted; rerun with approved network access
+  passed and installed the sentiment extra dependencies.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader
+  run-sentiment-gate --market-data
+  artifacts/datasets/btcusdt_1h_raw_20260101T000000Z_20260601T000000Z_20260712T174420Z.parquet
+  --hourly-sentiment
+  artifacts/sentiment/hourly/reddit_server_csv_posts_only_hourly_vader.parquet
+  --output-dir artifacts/experiments --run-id
+  sentiment-gate-05-posts-only-vader` from `rebuild/`: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/sentiment` from `rebuild/`: passed, `17 passed`.
+- Final `git diff --check` from the repository root: passed.
+
+### Results
+
+- Raw VADER post-only sentiment dataset:
+  `rebuild/artifacts/sentiment/raw/reddit_server_csv_posts_only_raw_vader/`.
+- Hourly VADER post-only sentiment dataset:
+  `rebuild/artifacts/sentiment/hourly/reddit_server_csv_posts_only_hourly_vader.parquet`.
+- Hourly VADER dataset rows: `6026`.
+- Hourly VADER dataset range: `2025-09-06T20:00:00Z` through
+  `2026-05-15T21:00:00Z`.
+- Phase 05 posts-only VADER gate artifact:
+  `rebuild/artifacts/experiments/sentiment-gate-05-posts-only-vader/`.
+- Gate decision: `keep_sentiment_research_only`.
+- Selected development-ranked sentiment variant: none.
+- Holdout confirmation: no sentiment variant improved holdout net return
+  versus `market_only`; most matched the market-only holdout return of about
+  `-6.06%`, while `sentiment_lag_1h` was slightly worse at about `-6.23%`.
+- `sentiment_only` remained research-only and ineligible for Phase 11.
+
+### Decisions
+
+- Treat the generated VADER result as a posts-only sentiment diagnostic, not as
+  a complete submissions-plus-comments Phase 10 result.
+- Sentiment remains research-only.
+- Phase 11 remains blocked.
+
+### Remaining blockers
+
+- True comment sentiment still requires actual comment body data.
+- The existing server CSV sentiment coverage has a gap between
+  `2026-01-30T21:13:09Z` and `2026-04-15T21:34:56Z`.
+
+### Recommended next work
+
+- Do not start paper trading.
+- If comment bodies exist elsewhere, convert them into the sentiment raw
+  comment schema and rerun the hourly sentiment build plus Phase 05 gate.
+
+## 2026-07-13 — Model Refinement 06: Model Class Comparison
+
+### Completed
+
+- Added `crypto-trader run-model-class-comparison` for a reproducible,
+  saved-market-only model-class comparison.
+- Compared Logistic Regression, Random Forest, and HistGradientBoosting under
+  identical fixed controls: `horizon_bars=12`, `cost_buffer=none`,
+  `volatility_multiplier=0.10`, baseline-only market features, expanding
+  development windows, fixed threshold candidates, final holdout separation,
+  costs, and long/cash backtest behavior.
+- Added dependency-gated XGBoost handling. XGBoost writes a skipped diagnostic
+  row by default and is skipped cleanly if explicitly enabled without the
+  optional dependency.
+- Wrote per-candidate resolved config, feature columns, model metadata,
+  development threshold summaries, fold metrics, holdout metrics, benchmark
+  metrics, diagnostics, and decision artifacts.
+- Documented probability comparison as `uncalibrated_predict_proba`; no
+  calibration was introduced.
+- Added unit and integration coverage for CLI help, offline execution,
+  identical config/features/split signatures, development-only ranking,
+  deterministic output, skipped XGBoost behavior, decision rejection, and Phase
+  11 remaining blocked.
+
+### Files changed
+
+- `rebuild/src/trader/modeling/model_class_comparison.py`
+- `rebuild/src/trader/cli.py`
+- `rebuild/tests/unit/modeling/test_model_class_comparison.py`
+- `rebuild/tests/unit/test_cli.py`
+- `rebuild/tests/integration/test_experiment_grid.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/modeling/test_model_class_comparison.py -q` from `rebuild/`:
+  passed, `7 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests/unit/test_cli.py
+  tests/unit/modeling tests/integration/test_experiment_grid.py` from
+  `rebuild/`: passed, `56 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `152 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check` from the repository root: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader
+  run-model-class-comparison --market-data
+  artifacts/datasets/btcusdt_1h_raw_20260101T000000Z_20260601T000000Z_20260712T174420Z.parquet
+  --output-dir artifacts/experiments --run-id model-class-comparison-06` from
+  `rebuild/`: passed.
+
+### Results
+
+- Artifact path:
+  `rebuild/artifacts/experiments/model-class-comparison-06/`.
+- Development-ranked selected model class: `logistic_regression`.
+- Logistic Regression selected threshold: `0.30`.
+- Logistic Regression median development total return: about `2.41%`.
+- Random Forest median development total return: about `1.84%`.
+- Gradient Boosting median development total return: about `1.84%`.
+- Holdout confirmation result: no non-logistic candidate improved holdout net
+  return versus Logistic Regression. The selected RF and Gradient Boosting
+  grids matched Logistic Regression holdout return at about `-6.06%`, max
+  drawdown about `-11.65%`, turnover about `1.94`, and exposure about
+  `99.86%`.
+- Decision: `model_class_change_rejected`.
+- XGBoost status: skipped by default with reason
+  `xgboost disabled; rerun with --enable-xgboost to evaluate`.
+- Phase 11 remains blocked.
+
+### Decisions
+
+- Model class change does not help under the controlled Refinement 06 setup.
+- Keep Logistic Regression as the baseline research model.
+- Do not use holdout for model-class or hyperparameter ranking.
+- Do not start paper trading.
+
+### Remaining blockers
+
+- The fixed market-only candidate still has poor holdout performance and near
+  full exposure.
+- Sentiment remains research-only from Refinement 05.
+- Phase 11 remains blocked until a candidate satisfies the paper-trading gate
+  and the user explicitly approves proceeding.
+
+### Recommended next work
+
+- Do not proceed to paper trading.
+- Reassess the target/signal design or exposure-control policy before any
+  further paper-trading gate attempt.
+
+### XGBoost follow-up
+
+- Ran `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev --with xgboost
+  crypto-trader run-model-class-comparison --market-data
+  artifacts/datasets/btcusdt_1h_raw_20260101T000000Z_20260601T000000Z_20260712T174420Z.parquet
+  --output-dir artifacts/experiments --run-id
+  model-class-comparison-06-xgboost-enabled --enable-xgboost` from
+  `rebuild/` after approving transient PyPI package download.
+- Artifact path:
+  `rebuild/artifacts/experiments/model-class-comparison-06-xgboost-enabled/`.
+- XGBoost evaluated successfully with the tiny predefined grid.
+- Selected XGBoost grid: `max_depth=3`, `learning_rate=0.03`,
+  `n_estimators=100`, `min_child_weight=20`.
+- XGBoost development median total return: about `1.84%`, below Logistic
+  Regression's about `2.41%`.
+- XGBoost holdout return: about `-6.06%`, max drawdown about `-11.65%`,
+  turnover about `1.94`, and exposure about `99.86%`.
+- Decision remained `model_class_change_rejected`; Phase 11 remains blocked.
 
 Append a dated entry after each phase:
 
@@ -851,3 +1687,128 @@ Append a dated entry after each phase:
 
 - ...
 ```
+
+## 2026-07-13 — Non-Phase Cross-Symbol Fine-Interval Diagnostic
+
+### Completed
+
+- Added `crypto-trader run-symbol-interval-grid`.
+- Generalized research data paths so config validation, Binance.US collection,
+  storage hashing, and candle resampling support non-BTC spot symbols.
+- Added Binance.US `exchangeInfo` availability checks; unavailable symbols are
+  skipped and recorded in diagnostics instead of failing the full run.
+- Added fixed market-only symbol/interval orchestration for:
+  `BTCUSDT, ETHUSDT, SOLUSDT, ADAUSDT, DOGEUSDT, LINKUSDT, AVAXUSDT,
+  LTCUSDT, BCHUSDT, SHIBUSDT, UNIUSDT`.
+- Added default interval sweep for `1h` through `14h`, including non-day-divisor
+  intervals such as `5h`, `7h`, `11h`, and `13h`.
+- Kept the model fixed to baseline Logistic Regression with baseline market
+  features only, one-next-candle targets, long/cash execution, and
+  development-only threshold/ranking selection.
+- Added required artifacts:
+  `symbol_interval_summary.csv`, `threshold_summary.csv`, `fold_metrics.csv`,
+  `holdout_metrics.csv`, `benchmark_metrics.csv`,
+  `dataset_diagnostics.csv`, `symbol_interval_decision.json`,
+  `sentiment_provenance_audit.json`, and per-symbol/per-interval config,
+  resampling metadata, and feature-column files.
+- Added tests for CLI help, non-BTC config/collection/storage behavior,
+  symbol-aware content hashes, unavailable-symbol diagnostics, arbitrary-hour
+  resampling, incomplete-bucket accounting, interval-scaled validation windows,
+  one-candle target horizon, development-only ranking, holdout confirmation
+  reporting, deterministic fixture output, sentiment audit status, and Phase
+  11 remaining blocked.
+
+### Files changed
+
+- `rebuild/src/trader/cli.py`
+- `rebuild/src/trader/config.py`
+- `rebuild/src/trader/data/market.py`
+- `rebuild/src/trader/data/storage.py`
+- `rebuild/src/trader/modeling/candle_intervals.py`
+- `rebuild/src/trader/modeling/symbol_interval_grid.py`
+- `rebuild/tests/unit/data/test_market.py`
+- `rebuild/tests/unit/data/test_storage.py`
+- `rebuild/tests/unit/modeling/test_candle_intervals.py`
+- `rebuild/tests/unit/modeling/test_symbol_interval_grid.py`
+- `rebuild/tests/unit/test_cli.py`
+- `rebuild/tests/unit/test_config.py`
+- `rebuild/tests/integration/test_experiment_grid.py`
+- `rebuild/codex_rebuild/HANDOFF.md`
+
+### Commands and results
+
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest
+  tests/unit/test_cli.py tests/unit/data tests/unit/modeling
+  tests/integration/test_experiment_grid.py` from `rebuild/`: passed,
+  `97 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev pytest tests` from
+  `rebuild/`: passed, `179 passed`.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev python -m compileall -q
+  src/trader` from `rebuild/`: passed.
+- `git diff --check` from the repository root: passed.
+- `UV_CACHE_DIR=/tmp/uv-cache uv run --extra dev crypto-trader
+  run-symbol-interval-grid --output-dir artifacts/experiments --run-id
+  symbol-interval-grid-09` from `rebuild/`: passed after live Binance.US
+  network approval.
+
+### Results
+
+- Artifact path:
+  `rebuild/artifacts/experiments/symbol-interval-grid-09/`.
+- Development-ranked selected candidate: `LINKUSDT` at `11h`.
+- Selected threshold: `0.30`.
+- Development median total return: about `6.47%`.
+- Development median cash return: `0.00%`.
+- Development median buy-and-hold return: about `1.31%`.
+- Development median max drawdown: about `-2.43%`.
+- Development median exposure: about `62.50%`.
+- Development mean precision: about `42.07%`.
+- Development mean recall: about `74.81%`.
+- Development mean F1: about `52.73%`.
+- Holdout confirmation result: confirmed.
+- Holdout strategy return: about `1.18%`.
+- Holdout cash return: `0.00%`.
+- Holdout buy-and-hold return: about `-0.71%`.
+- Holdout max drawdown: about `-11.88%`.
+- Holdout trades: `10`.
+- Holdout exposure: about `74.24%`.
+- Decision JSON recorded:
+  `altcoin_interval_improves_over_btc_12h_on_development: true`,
+  `any_candidate_confirms_on_holdout: true`,
+  `holdout_used_for_ranking: false`, and `phase_11_status: blocked`.
+
+### Decisions
+
+- Treat `LINKUSDT` `11h` as the best current market-only research candidate,
+  not as a deployable trading approval.
+- Holdout remains confirmation-only. It was not used to select symbols,
+  intervals, thresholds, features, or model class.
+- Keep Phase 11 blocked despite the confirmed holdout result because this was a
+  non-phase diagnostic, not a paper-trading gate. The result is modest, has a
+  meaningful holdout drawdown, and does not validate execution readiness,
+  monitoring, operational controls, or user approval for paper trading.
+- Treat the prior sentiment gate as
+  `inconclusive_for_bitcoin_specific_sentiment`.
+- Do not interpret the old sentiment artifact as Bitcoin-specific or
+  coin-specific. The audit records it as server CSV, posts-only, six subreddits,
+  with no current metadata proving Bitcoin specificity.
+
+### Remaining blockers
+
+- Phase 11 remains blocked.
+- Coin-specific sentiment has not been rebuilt or tested.
+- The selected `LINKUSDT` `11h` candidate needs a separate follow-up review
+  before any deployment discussion, including robustness checks, liquidity and
+  cost sensitivity, symbol-specific sentiment rebuild, and paper-trading gate
+  criteria.
+
+### Recommended next work
+
+- Rebuild sentiment as symbol-specific artifacts with explicit provenance and
+  symbol labels, then evaluate whether sentiment improves the selected
+  symbol/interval candidate without using holdout for selection.
+- Run robustness diagnostics for `LINKUSDT` `11h`: alternate date windows,
+  cost/slippage sensitivity, threshold stability, exposure controls, and
+  minimum liquidity checks.
+- Define an explicit Phase 11 paper-trading gate for a non-BTC candidate before
+  starting any paper trading.

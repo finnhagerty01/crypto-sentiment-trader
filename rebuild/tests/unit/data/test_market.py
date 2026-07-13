@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 
 from trader.data.market import (
+    BinanceUsSpotKlineClient,
     MarketCollectionError,
     collect_market_data,
 )
@@ -25,6 +26,14 @@ class FakeKlineClient:
         limit: int = 1000,
     ) -> list[list[object]]:
         self.calls += 1
+        return self.payload
+
+
+@dataclass
+class FakeHttpClient:
+    payload: object
+
+    def get_json(self, url: str, params: dict[str, object], *, timeout: float) -> object:
         return self.payload
 
 
@@ -85,9 +94,48 @@ def test_drops_incomplete_candles() -> None:
     assert data["close"].tolist() == [101.0]
 
 
-def test_rejects_unsupported_symbol_and_interval() -> None:
-    with pytest.raises(MarketCollectionError, match="supports only BTCUSDT"):
-        collect_market_data(start="2026-01-01", end="2026-01-02", symbol="ETHUSDT")
+def test_collects_non_btc_symbol_with_fake_client() -> None:
+    client = FakeKlineClient([kline(1767225600000, 1767229199999)])
 
+    data = collect_market_data(
+        start="2026-01-01T00:00:00Z",
+        end="2026-01-01T01:00:00Z",
+        symbol="ETHUSDT",
+        client=client,
+        now="2026-01-01T01:00:00Z",
+    )
+
+    assert data["symbol"].unique().tolist() == ["ETHUSDT"]
+
+
+def test_available_symbols_filters_trading_spot_symbols() -> None:
+    client = BinanceUsSpotKlineClient(
+        http_client=FakeHttpClient(
+            {
+                "symbols": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "status": "TRADING",
+                        "isSpotTradingAllowed": True,
+                    },
+                    {
+                        "symbol": "OLDUSDT",
+                        "status": "BREAK",
+                        "isSpotTradingAllowed": True,
+                    },
+                    {
+                        "symbol": "MARGINUSDT",
+                        "status": "TRADING",
+                        "isSpotTradingAllowed": False,
+                    },
+                ]
+            }
+        )
+    )
+
+    assert client.available_symbols() == {"BTCUSDT"}
+
+
+def test_rejects_unsupported_interval() -> None:
     with pytest.raises(MarketCollectionError, match="supports only 1h"):
         collect_market_data(start="2026-01-01", end="2026-01-02", interval="5m")

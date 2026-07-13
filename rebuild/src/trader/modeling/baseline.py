@@ -13,7 +13,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from trader.config import TraderConfig
-from trader.features.market import MODEL_FEATURE_COLUMNS
+from trader.features.market import MODEL_FEATURE_COLUMNS, model_feature_columns
 from trader.features.target import TARGET_COLUMN
 
 
@@ -35,11 +35,15 @@ class BaselineLogisticModel:
         self,
         config: TraderConfig,
         *,
-        feature_names: tuple[str, ...] = MODEL_FEATURE_COLUMNS,
+        feature_names: tuple[str, ...] | None = None,
         pipeline: Pipeline | None = None,
     ) -> None:
         self.config = config
-        self._feature_names = tuple(feature_names)
+        self._feature_names = (
+            model_feature_columns(config)
+            if feature_names is None
+            else tuple(feature_names)
+        )
         self.pipeline = pipeline if pipeline is not None else _build_pipeline(config)
         self._is_fit = pipeline is not None
 

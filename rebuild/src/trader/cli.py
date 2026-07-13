@@ -11,6 +11,28 @@ import sys
 from trader.config import ConfigError, load_config
 from trader.data.market import SOURCE_NAME, MarketCollectionError, collect_market_data
 from trader.data.storage import write_market_dataset
+from trader.modeling.candle_intervals import (
+    CandleIntervalComparisonError,
+    run_candle_interval_comparison,
+)
+from trader.modeling.experiments import ExperimentConfigError, run_experiment_grid
+from trader.modeling.model_class_comparison import (
+    ModelClassComparisonError,
+    run_model_class_comparison,
+)
+from trader.modeling.regime_specialists import (
+    RegimeSpecialistComparisonError,
+    run_regime_specialist_comparison,
+)
+from trader.modeling.symbol_interval_grid import (
+    DEFAULT_END as SYMBOL_GRID_DEFAULT_END,
+    DEFAULT_INTERVALS as SYMBOL_GRID_DEFAULT_INTERVALS,
+    DEFAULT_START as SYMBOL_GRID_DEFAULT_START,
+    DEFAULT_SYMBOLS as SYMBOL_GRID_DEFAULT_SYMBOLS,
+    SymbolIntervalGridError,
+    run_symbol_interval_grid,
+)
+from trader.sentiment.gate import SentimentGateError, run_sentiment_gate
 from trader.workflow import (
     WorkflowError,
     build_dataset_artifact,
@@ -26,6 +48,12 @@ COMMANDS = (
     "train",
     "backtest",
     "run-baseline",
+    "run-experiment-grid",
+    "run-sentiment-gate",
+    "run-model-class-comparison",
+    "run-candle-interval-comparison",
+    "run-regime-specialist-comparison",
+    "run-symbol-interval-grid",
 )
 
 
@@ -126,6 +154,211 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory for the report bundle",
     )
     run_baseline.add_argument("--run-id", help="explicit report directory name")
+
+    experiment_grid = subparsers.add_parser(
+        "run-experiment-grid",
+        help="compare named model-refinement variants from a saved market dataset",
+        description=(
+            "Run a deterministic named-variant experiment grid from a saved market "
+            "dataset. This command never fetches external data."
+        ),
+    )
+    experiment_grid.add_argument(
+        "--market-data",
+        required=True,
+        help="saved raw market Parquet dataset with metadata sidecar",
+    )
+    experiment_grid.add_argument(
+        "--experiment-config",
+        required=True,
+        help="YAML file defining named variants and dot-path overrides",
+    )
+    experiment_grid.add_argument(
+        "--output-dir",
+        required=True,
+        help="directory under which the run_id experiment directory is written",
+    )
+    experiment_grid.add_argument(
+        "--run-id",
+        required=True,
+        help="deterministic experiment run directory name",
+    )
+
+    sentiment_gate = subparsers.add_parser(
+        "run-sentiment-gate",
+        help="reevaluate saved hourly sentiment against the fixed market-only setup",
+        description=(
+            "Run the Model Refinement 05 sentiment reevaluation gate from saved "
+            "market and hourly sentiment datasets. This command never fetches "
+            "Reddit, Binance, or external data."
+        ),
+    )
+    sentiment_gate.add_argument(
+        "--market-data",
+        required=True,
+        help="saved raw market Parquet dataset with metadata sidecar",
+    )
+    sentiment_gate.add_argument(
+        "--hourly-sentiment",
+        required=True,
+        help="saved hourly sentiment Parquet dataset with metadata sidecar",
+    )
+    sentiment_gate.add_argument(
+        "--output-dir",
+        required=True,
+        help="directory under which the run_id sentiment gate directory is written",
+    )
+    sentiment_gate.add_argument(
+        "--run-id",
+        required=True,
+        help="deterministic sentiment gate run directory name",
+    )
+
+    model_class = subparsers.add_parser(
+        "run-model-class-comparison",
+        help="compare fixed model classes from a saved market dataset",
+        description=(
+            "Run the Model Refinement 06 model-class comparison from a saved "
+            "market dataset. This command never fetches Reddit, Binance, or "
+            "external data."
+        ),
+    )
+    model_class.add_argument("--config", default="configs/baseline.yaml")
+    model_class.add_argument(
+        "--market-data",
+        required=True,
+        help="saved raw market Parquet dataset with metadata sidecar",
+    )
+    model_class.add_argument(
+        "--output-dir",
+        required=True,
+        help="directory under which the run_id model comparison directory is written",
+    )
+    model_class.add_argument(
+        "--run-id",
+        required=True,
+        help="deterministic model comparison run directory name",
+    )
+    model_class.add_argument(
+        "--enable-xgboost",
+        action="store_true",
+        help="evaluate XGBoost only when the optional dependency is installed",
+    )
+
+    candle_intervals = subparsers.add_parser(
+        "run-candle-interval-comparison",
+        help="compare resampled BTCUSDT candle intervals from saved 1h data",
+        description=(
+            "Run an offline candle interval diagnostic from a saved BTCUSDT 1h "
+            "market dataset. This command never fetches market or external data."
+        ),
+    )
+    candle_intervals.add_argument("--config", default="configs/baseline.yaml")
+    candle_intervals.add_argument(
+        "--market-data",
+        required=True,
+        help="saved raw 1h market Parquet dataset with metadata sidecar",
+    )
+    candle_intervals.add_argument(
+        "--output-dir",
+        required=True,
+        help="directory under which the run_id interval comparison directory is written",
+    )
+    candle_intervals.add_argument(
+        "--run-id",
+        required=True,
+        help="deterministic candle interval run directory name",
+    )
+    candle_intervals.add_argument(
+        "--intervals",
+        default="1h,4h,12h,1d",
+        help="comma-separated intervals to compare; defaults to 1h,4h,12h,1d",
+    )
+    candle_intervals.add_argument(
+        "--max-development-exposure",
+        type=float,
+        default=0.80,
+        help="maximum median development exposure for threshold eligibility",
+    )
+
+    regime_specialists = subparsers.add_parser(
+        "run-regime-specialist-comparison",
+        help="compare causal bull/bear regime specialist candidates",
+        description=(
+            "Run an offline rule-regime specialist diagnostic from a saved BTCUSDT "
+            "1h market dataset. This command never fetches market or external data."
+        ),
+    )
+    regime_specialists.add_argument("--config", default="configs/baseline.yaml")
+    regime_specialists.add_argument(
+        "--market-data",
+        required=True,
+        help="saved raw 1h market Parquet dataset with metadata sidecar",
+    )
+    regime_specialists.add_argument(
+        "--output-dir",
+        required=True,
+        help="directory under which the run_id regime comparison directory is written",
+    )
+    regime_specialists.add_argument(
+        "--run-id",
+        required=True,
+        help="deterministic regime comparison run directory name",
+    )
+    regime_specialists.add_argument(
+        "--lookback-bars",
+        type=int,
+        default=168,
+        help="trailing bars used for causal bull/bear regime labels",
+    )
+
+    symbol_interval_grid = subparsers.add_parser(
+        "run-symbol-interval-grid",
+        help="collect/reuse liquid symbols and compare 1h through 14h intervals",
+        description=(
+            "Run a cross-symbol market-only interval diagnostic. Binance.US "
+            "availability is checked at runtime; unavailable symbols are "
+            "recorded in diagnostics and skipped. This command never starts "
+            "paper trading."
+        ),
+    )
+    symbol_interval_grid.add_argument("--config", default="configs/baseline.yaml")
+    symbol_interval_grid.add_argument(
+        "--output-dir",
+        required=True,
+        help="directory under which the run_id symbol interval directory is written",
+    )
+    symbol_interval_grid.add_argument(
+        "--run-id",
+        required=True,
+        help="deterministic symbol interval run directory name",
+    )
+    symbol_interval_grid.add_argument(
+        "--symbols",
+        default=",".join(SYMBOL_GRID_DEFAULT_SYMBOLS),
+        help="comma-separated Binance.US spot symbols to evaluate",
+    )
+    symbol_interval_grid.add_argument(
+        "--intervals",
+        default=",".join(SYMBOL_GRID_DEFAULT_INTERVALS),
+        help="comma-separated intervals to compare; defaults to 1h through 14h",
+    )
+    symbol_interval_grid.add_argument(
+        "--start",
+        default=SYMBOL_GRID_DEFAULT_START,
+        help="UTC start timestamp for 1h collection, inclusive",
+    )
+    symbol_interval_grid.add_argument(
+        "--end",
+        default=SYMBOL_GRID_DEFAULT_END,
+        help="UTC end timestamp for 1h collection, exclusive",
+    )
+    symbol_interval_grid.add_argument(
+        "--max-development-exposure",
+        type=float,
+        default=0.80,
+        help="maximum median development exposure for threshold eligibility",
+    )
     return parser
 
 
@@ -145,6 +378,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _backtest(args)
     if args.command == "run-baseline":
         return _run_baseline(args)
+    if args.command == "run-experiment-grid":
+        return _run_experiment_grid(args)
+    if args.command == "run-sentiment-gate":
+        return _run_sentiment_gate(args)
+    if args.command == "run-model-class-comparison":
+        return _run_model_class_comparison(args)
+    if args.command == "run-candle-interval-comparison":
+        return _run_candle_interval_comparison(args)
+    if args.command == "run-regime-specialist-comparison":
+        return _run_regime_specialist_comparison(args)
+    if args.command == "run-symbol-interval-grid":
+        return _run_symbol_interval_grid(args)
 
     raise AssertionError(f"unhandled command: {args.command}")
 
@@ -256,6 +501,184 @@ def _run_baseline(args: argparse.Namespace) -> int:
     print(f"saved report bundle to {result['report']}")
     _print_metric_comparison(result["metrics"], result["benchmark_metrics"])
     return 0
+
+
+def _run_experiment_grid(args: argparse.Namespace) -> int:
+    try:
+        result = run_experiment_grid(
+            market_dataset_path=args.market_data,
+            experiment_config_path=args.experiment_config,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+        )
+    except (ConfigError, ExperimentConfigError, OSError, ValueError, WorkflowError) as exc:
+        print(f"error: run-experiment-grid failed: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"saved experiment artifacts to {result['run_dir']}")
+    selected = result["selected_variant"]
+    if selected is None:
+        print("selected_variant=None")
+    else:
+        print(
+            "selected_variant="
+            f"{selected['variant_name']} "
+            f"threshold={_format_metric(selected.get('selected_threshold'))} "
+            f"dev_total_return={_format_metric(selected.get('selected_median_total_return'))} "
+            f"holdout_total_return={_format_metric(selected.get('holdout_total_return'))}"
+        )
+    return 0
+
+
+def _run_sentiment_gate(args: argparse.Namespace) -> int:
+    try:
+        config = load_config("configs/baseline.yaml")
+        result = run_sentiment_gate(
+            market_dataset_path=args.market_data,
+            hourly_sentiment_path=args.hourly_sentiment,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            config=config,
+        )
+    except (
+        ConfigError,
+        ExperimentConfigError,
+        SentimentGateError,
+        OSError,
+        FileExistsError,
+        ValueError,
+        WorkflowError,
+    ) as exc:
+        print(f"error: run-sentiment-gate failed: {exc}", file=sys.stderr)
+        return 2
+
+    decision = result["decision"]
+    print(f"saved sentiment gate to {result['run_dir']}")
+    print(f"decision={decision['decision']}")
+    print(f"phase11_remains_blocked={decision['phase11_remains_blocked']}")
+    return 0
+
+
+def _run_model_class_comparison(args: argparse.Namespace) -> int:
+    try:
+        result = run_model_class_comparison(
+            market_dataset_path=args.market_data,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            config_path=args.config,
+            enable_xgboost=args.enable_xgboost,
+        )
+    except (
+        ConfigError,
+        ModelClassComparisonError,
+        OSError,
+        FileExistsError,
+        ValueError,
+        WorkflowError,
+    ) as exc:
+        print(f"error: run-model-class-comparison failed: {exc}", file=sys.stderr)
+        return 2
+
+    decision = result["decision"]
+    print(f"saved model-class comparison to {result['run_dir']}")
+    print(f"decision={decision['decision']}")
+    print(f"phase_11_status={decision['phase_11_status']}")
+    return 0
+
+
+def _run_candle_interval_comparison(args: argparse.Namespace) -> int:
+    try:
+        intervals = tuple(
+            interval.strip()
+            for interval in str(args.intervals).split(",")
+            if interval.strip()
+        )
+        result = run_candle_interval_comparison(
+            market_dataset_path=args.market_data,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            config_path=args.config,
+            intervals=intervals,
+            max_development_exposure=args.max_development_exposure,
+        )
+        print(f"wrote candle interval comparison to {result['run_dir']}")
+        return 0
+    except (
+        CandleIntervalComparisonError,
+        ConfigError,
+        FileExistsError,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+
+def _run_regime_specialist_comparison(args: argparse.Namespace) -> int:
+    try:
+        result = run_regime_specialist_comparison(
+            market_dataset_path=args.market_data,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            config_path=args.config,
+            lookback_bars=args.lookback_bars,
+        )
+    except (
+        RegimeSpecialistComparisonError,
+        ConfigError,
+        FileExistsError,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"error: run-regime-specialist-comparison failed: {exc}", file=sys.stderr)
+        return 2
+
+    decision = result["decision"]
+    print(f"saved regime specialist comparison to {result['run_dir']}")
+    print(f"decision={decision['decision']}")
+    print(f"phase_11_status={decision['phase_11_status']}")
+    return 0
+
+
+def _run_symbol_interval_grid(args: argparse.Namespace) -> int:
+    try:
+        result = run_symbol_interval_grid(
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            config_path=args.config,
+            symbols=_parse_csv_tuple(args.symbols),
+            intervals=_parse_csv_tuple(args.intervals),
+            start=args.start,
+            end=args.end,
+            max_development_exposure=args.max_development_exposure,
+        )
+    except (
+        ConfigError,
+        SymbolIntervalGridError,
+        MarketCollectionError,
+        FileExistsError,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"error: run-symbol-interval-grid failed: {exc}", file=sys.stderr)
+        return 2
+
+    decision = result["decision"]
+    print(f"saved symbol interval grid to {result['run_dir']}")
+    print(
+        "selected_development_ranked_symbol_interval="
+        f"{decision['selected_development_ranked_symbol_interval']}"
+    )
+    print(f"holdout_confirmation_result={decision['holdout_confirmation_result']}")
+    print(f"phase_11_status={decision['phase_11_status']}")
+    return 0
+
+
+def _parse_csv_tuple(value: str) -> tuple[str, ...]:
+    values = tuple(part.strip() for part in str(value).split(",") if part.strip())
+    if not values:
+        raise ValueError("at least one value is required")
+    return values
 
 
 def _raw_dataset_name(*, symbol: str, interval: str, start: str, end: str) -> str:

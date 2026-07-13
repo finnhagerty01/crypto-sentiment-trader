@@ -127,7 +127,9 @@ def build_metadata(
 def content_hash(data: pd.DataFrame) -> str:
     """Return a deterministic hash of canonical dataset content."""
 
-    normalized = normalize_ohlcv(data)
+    symbols = data["symbol"].dropna().astype(str).unique().tolist() if "symbol" in data else []
+    symbol = symbols[0] if len(symbols) == 1 else "BTCUSDT"
+    normalized = normalize_ohlcv(data, symbol=symbol)
     lines = ["timestamp,symbol,open,high,low,close,volume"]
     for row in normalized.itertuples(index=False):
         lines.append(

@@ -1,0 +1,59 @@
+variants:
+  - name: h12_none_v010_baseline
+    config: configs/baseline.yaml
+    overrides:
+      target.horizon_bars: 12
+      target.cost_buffer: none
+      target.volatility_multiplier: 0.10
+      features.enabled_groups:
+        - baseline
+
+  - name: h12_none_v010_trend
+    config: configs/baseline.yaml
+    overrides:
+      target.horizon_bars: 12
+      target.cost_buffer: none
+      target.volatility_multiplier: 0.10
+      features.enabled_groups:
+        - baseline
+        - trend
+
+  - name: h12_none_v010_volatility
+    config: configs/baseline.yaml
+    overrides:
+      target.horizon_bars: 12
+      target.cost_buffer: none
+      target.volatility_multiplier: 0.10
+      features.enabled_groups:
+        - baseline
+        - volatility
+
+  - name: h12_none_v010_volume
+    config: configs/baseline.yaml
+    overrides:
+      target.horizon_bars: 12
+      target.cost_buffer: none
+      target.volatility_multiplier: 0.10
+      features.enabled_groups:
+        - baseline
+        - volume
+
+  - name: h12_none_v010_calendar
+    config: configs/baseline.yaml
+    overrides:
+      target.horizon_bars: 12
+      target.cost_buffer: none
+      target.volatility_multiplier: 0.10
+      features.enabled_groups:
+        - baseline
+        - calendar
+
+  - name: h12_none_v010_momentum_reversal
+    config: configs/baseline.yaml
+    overrides:
+      target.horizon_bars: 12
+      target.cost_buffer: none
+      target.volatility_multiplier: 0.10
+      features.enabled_groups:
+        - baseline
+        - momentum_reversal

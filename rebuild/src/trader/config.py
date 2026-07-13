@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 import math
 from pathlib import Path
+from types import GenericAlias
 from types import UnionType
 from typing import Any, Mapping, Union, get_args, get_origin, get_type_hints
 
@@ -28,11 +29,13 @@ class FeaturesConfig:
     rsi_window: int
     clipping_window: int
     clipping_mad_multiplier: float
+    enabled_groups: tuple[str, ...] = ("baseline",)
 
 
 @dataclass(frozen=True, slots=True)
 class TargetConfig:
     horizon_bars: int
+    cost_buffer: str
     volatility_multiplier: float
 
 
@@ -126,8 +129,7 @@ def _build_dataclass[T](
                 nested_type, _require_mapping(value, field_location), field_location
             )
         else:
-            _require_type(value, expected_type, field_location)
-            kwargs[name] = value
+            kwargs[name] = _coerce_value(value, expected_type, field_location)
     return config_type(**kwargs)
 
 
@@ -144,10 +146,18 @@ def _require_mapping(value: Any, location: str) -> Mapping[str, Any]:
 
 
 def _require_type(value: Any, annotation: Any, location: str) -> None:
+    _coerce_value(value, annotation, location)
+
+
+def _coerce_value(value: Any, annotation: Any, location: str) -> Any:
     origin = get_origin(annotation)
+    if origin is tuple:
+        return _coerce_tuple(value, annotation, location)
     accepted = get_args(annotation) if origin in (Union, UnionType) else (annotation,)
 
     def matches(candidate: Any) -> bool:
+        if isinstance(candidate, GenericAlias):
+            return isinstance(value, get_origin(candidate))
         if candidate is float:
             return isinstance(value, (int, float)) and not isinstance(value, bool)
         if candidate is int:
@@ -157,13 +167,26 @@ def _require_type(value: Any, annotation: Any, location: str) -> None:
     if not any(matches(candidate) for candidate in accepted):
         names = " or ".join(getattr(candidate, "__name__", str(candidate)) for candidate in accepted)
         raise ConfigError(f"{location}: expected {names}, got {type(value).__name__}")
+    return value
+
+
+def _coerce_tuple(value: Any, annotation: Any, location: str) -> tuple[Any, ...]:
+    if not isinstance(value, list):
+        raise ConfigError(f"{location}: expected list, got {type(value).__name__}")
+    args = get_args(annotation)
+    item_type = args[0] if args else Any
+    if item_type is str:
+        invalid = [item for item in value if not isinstance(item, str)]
+        if invalid:
+            raise ConfigError(f"{location}: expected list of str")
+    return tuple(value)
 
 
 def _validate(config: TraderConfig) -> None:
-    if config.data.symbol != "BTCUSDT":
-        raise ConfigError("config.data.symbol: baseline supports only BTCUSDT")
-    if config.data.interval != "1h":
-        raise ConfigError("config.data.interval: baseline supports only 1h")
+    if not config.data.symbol or not config.data.symbol.isalnum():
+        raise ConfigError("config.data.symbol: must be a non-empty alphanumeric symbol")
+    if not _valid_interval(config.data.interval):
+        raise ConfigError("config.data.interval: must be a positive hour or day interval")
 
     positive_integers = {
         "config.features.volatility_window": config.features.volatility_window,
@@ -178,6 +201,39 @@ def _validate(config: TraderConfig) -> None:
     for name, value in positive_integers.items():
         if value <= 0:
             raise ConfigError(f"{name}: must be greater than zero")
+
+    allowed_feature_groups = {
+        "baseline",
+        "trend",
+        "volatility",
+        "volume",
+        "calendar",
+        "momentum_reversal",
+    }
+    if not config.features.enabled_groups:
+        raise ConfigError("config.features.enabled_groups: must not be empty")
+    unknown_groups = [
+        group
+        for group in config.features.enabled_groups
+        if group not in allowed_feature_groups
+    ]
+    if unknown_groups:
+        raise ConfigError(
+            "config.features.enabled_groups: unknown group(s): "
+            + ", ".join(sorted(unknown_groups))
+        )
+    duplicate_groups = sorted(
+        {
+            group
+            for group in config.features.enabled_groups
+            if config.features.enabled_groups.count(group) > 1
+        }
+    )
+    if duplicate_groups:
+        raise ConfigError(
+            "config.features.enabled_groups: duplicate group(s): "
+            + ", ".join(duplicate_groups)
+        )
 
     positive_numbers = {
         "config.features.clipping_mad_multiplier": (
@@ -200,6 +256,10 @@ def _validate(config: TraderConfig) -> None:
         raise ConfigError(
             "config.target.volatility_multiplier: must be greater than or equal to zero"
         )
+    if config.target.cost_buffer not in {"none", "one_way", "round_trip"}:
+        raise ConfigError(
+            "config.target.cost_buffer: must be one of none, one_way, round_trip"
+        )
     _validate_open_fraction(
         "config.model.probability_threshold", config.model.probability_threshold
     )
@@ -220,3 +280,13 @@ def _validate_open_fraction(name: str, value: float) -> None:
         raise ConfigError(f"{name}: must be finite")
     if not 0 < value < 1:
         raise ConfigError(f"{name}: must be between zero and one (exclusive)")
+
+
+def _valid_interval(value: str) -> bool:
+    if not isinstance(value, str) or len(value) < 2:
+        return False
+    unit = value[-1]
+    amount = value[:-1]
+    if unit not in {"h", "d"} or not amount.isdigit():
+        return False
+    return int(amount) > 0

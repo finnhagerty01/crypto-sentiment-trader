@@ -113,7 +113,11 @@ def _config() -> TraderConfig:
             clipping_window=168,
             clipping_mad_multiplier=8.0,
         ),
-        target=TargetConfig(horizon_bars=1, volatility_multiplier=0.10),
+        target=TargetConfig(
+            horizon_bars=1,
+            cost_buffer="round_trip",
+            volatility_multiplier=0.10,
+        ),
         model=ModelConfig(probability_threshold=0.55, regularization_c=1.0),
         validation=ValidationConfig(
             minimum_train_bars=20,

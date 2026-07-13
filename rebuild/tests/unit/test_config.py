@@ -30,6 +30,8 @@ def test_loads_baseline_into_typed_immutable_config() -> None:
     assert isinstance(config, TraderConfig)
     assert config.data.symbol == "BTCUSDT"
     assert config.features.volatility_window == 24
+    assert config.features.enabled_groups == ("baseline",)
+    assert config.target.cost_buffer == "round_trip"
     assert config.model.probability_threshold == pytest.approx(0.55)
     with pytest.raises((AttributeError, TypeError)):
         config.data.symbol = "ETHUSDT"  # type: ignore[misc]
@@ -41,13 +43,30 @@ def test_relative_path_resolves_against_explicit_working_directory() -> None:
     assert config.data.interval == "1h"
 
 
+def test_accepts_non_btc_symbol_for_research_configs(
+    tmp_path: Path,
+    baseline_values: dict[str, object],
+) -> None:
+    data = baseline_values["data"]
+    assert isinstance(data, dict)
+    data["symbol"] = "ETHUSDT"
+
+    config = load_config(write_config(tmp_path, baseline_values))
+
+    assert config.data.symbol == "ETHUSDT"
+
+
 @pytest.mark.parametrize(
     ("section", "field", "value", "message"),
     [
-        ("data", "symbol", "ETHUSDT", "supports only BTCUSDT"),
-        ("data", "interval", "5m", "supports only 1h"),
+        ("data", "symbol", "ETH-USDT", "alphanumeric"),
+        ("data", "interval", "5m", "positive hour or day"),
         ("features", "rsi_window", 0, "must be greater than zero"),
+        ("features", "enabled_groups", ["baseline", "macro"], "unknown group"),
+        ("features", "enabled_groups", ["baseline", "baseline"], "duplicate group"),
+        ("features", "enabled_groups", [], "must not be empty"),
         ("target", "horizon_bars", -1, "must be greater than zero"),
+        ("target", "cost_buffer", "half_trip", "must be one of"),
         ("target", "volatility_multiplier", -0.1, "greater than or equal"),
         ("model", "probability_threshold", 1.0, "between zero and one"),
         ("model", "probability_threshold", float("nan"), "must be finite"),
